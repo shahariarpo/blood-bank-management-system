@@ -12,9 +12,18 @@ public class BloodUnit {
     private LocalDate collectionDate;
     private LocalDate expiryDate;
     private String status;
+    private String donorName;
 
     public BloodUnit(int unitId, int donationId, String bloodGroup, String componentType,
                      LocalDate collectionDate, LocalDate expiryDate, String status) {
+        this(unitId, donationId, bloodGroup, componentType, collectionDate,
+                expiryDate, status, null);
+    }
+
+    /** Constructor used by joined inventory queries. */
+    public BloodUnit(int unitId, int donationId, String bloodGroup, String componentType,
+                     LocalDate collectionDate, LocalDate expiryDate, String status,
+                     String donorName) {
         this.unitId = unitId;
         this.donationId = donationId;
         this.bloodGroup = bloodGroup;
@@ -22,6 +31,7 @@ public class BloodUnit {
         this.collectionDate = collectionDate;
         this.expiryDate = expiryDate;
         this.status = status;
+        this.donorName = donorName;
     }
 
     public int getUnitId() { return unitId; }
@@ -31,4 +41,7 @@ public class BloodUnit {
     public LocalDate getCollectionDate() { return collectionDate; }
     public LocalDate getExpiryDate() { return expiryDate; }
     public String getStatus() { return status; }
+    public String getDonorName() { return donorName; }
+
+    public void setStatus(String status) { this.status = status; }
 }

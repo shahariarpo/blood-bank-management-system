@@ -12,7 +12,7 @@ Location: `/home/arpo/Projects/Blood Bank Management System`
 | 3 | Main UI | **DONE** |
 | 4 | Donor management | **DONE** |
 | 5 | Donation management | **DONE** |
-| 6 | Inventory | **NOT DONE** |
+| 6 | Inventory | **DONE** |
 | 7 | Patient and request management | **NOT DONE** |
 | 8 | Dashboard, reports and final testing | **NOT DONE** |
 
@@ -49,6 +49,7 @@ Location: `/home/arpo/Projects/Blood Bank Management System`
   java -jar target/blood-bank-management-system-1.0-SNAPSHOT.jar --test-auth
   java -jar target/blood-bank-management-system-1.0-SNAPSHOT.jar --test-donors
   java -jar target/blood-bank-management-system-1.0-SNAPSHOT.jar --test-donations
+  java -jar target/blood-bank-management-system-1.0-SNAPSHOT.jar --test-inventory
   ```
 
 ---
@@ -114,18 +115,28 @@ Location: `/home/arpo/Projects/Blood Bank Management System`
 - [x] Only `ACCEPTED` donations create `AVAILABLE` blood units; REJECTED/PENDING do not.
 - [x] Accept and unit insertion happen in one SQL transaction; accepted/already-processed donations cannot be processed again.
 - [x] Console smoke test `--test-donations` (pending, accept + expiry, duplicate process, accepted-on-record, rejected, future date, invalid quantity).
-- Verified: clean build, all three console tests pass, database counts return to 0/0/0, GUI launches without exceptions.
+- Verified: clean build, console tests pass, test data is cleaned up, GUI launches without exceptions.
 - Note: expiry periods are illustrative; real laboratory policy governs clinical use.
 
-## Milestone 6 — Inventory — **NOT DONE**
+## Milestone 6 — Inventory — **DONE**
 
-- [x] `BloodUnit` model and minimal `BloodUnitDAO` insert/duplicate guard (added in Milestone 5).
-- [ ] Expand `BloodUnitDAO` with listing, filtering and status management (Milestone 6).
-- [ ] `InventoryService` for filtering, stock calculation, expiry monitoring, status management.
-- [ ] Real `InventoryPanel`: list units, filter by blood group and availability, search by unit ID.
-- [ ] Statuses: `AVAILABLE`, `ISSUED`, `EXPIRED`, `QUARANTINED`.
-- [ ] FEFO (first-expiring-first-out) selection of eligible units.
-- [ ] Inventory calculated from individual unit records, never a manual stock counter.
+- [x] `BloodUnit` expanded with joined-query donor name and mutable status.
+- [x] `BloodUnitDAO` expanded with joined listing, keyword/group/status filters, find-by-ID,
+      FEFO selection, expiry flagging, manual status updates, group counts and status counts.
+- [x] `InventoryService` with refresh-statuses, filtering, stock counts, expiry monitoring,
+      quarantine/release rules, and FEFO selection for future issuing.
+- [x] Real `InventoryPanel` replaces the placeholder: unit table, search, group/status filters,
+      available-by-group summary, expiry monitor, and quarantine/release actions.
+- [x] Statuses: `AVAILABLE`, `ISSUED`, `EXPIRED`, `QUARANTINED`; only AVAILABLE/QUARANTINED
+      can be changed manually; ISSUED/EXPIRED are system-controlled.
+- [x] FEFO (first-expiring-first-out) selects only unexpired AVAILABLE units, ordered by
+      expiry date then unit ID.
+- [x] Inventory is calculated from individual unit rows; there is no stored stock counter.
+- [x] Console smoke test `--test-inventory` (FEFO order, derived counts, expiry detection,
+      quarantine/release, ID search, insufficient stock, invalid status change).
+- [x] Test uses an empty blood group selected at runtime so it does not depend on user data.
+- Verified: clean build, all four console tests pass, test data is removed, GUI launches without exceptions.
+- Note: FEFO here only selects units; Milestone 7 will perform transactional issuing.
 
 ## Milestone 7 — Patient and request management — **NOT DONE**
 

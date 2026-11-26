@@ -5,11 +5,13 @@ import com.bloodbank.database.DatabaseConnection;
 import com.bloodbank.database.DatabaseInitializer;
 import com.bloodbank.model.Admin;
 import com.bloodbank.model.BloodComponent;
+import com.bloodbank.model.BloodUnit;
 import com.bloodbank.model.Donation;
 import com.bloodbank.model.Donor;
 import com.bloodbank.service.AuthService;
 import com.bloodbank.service.DonationService;
 import com.bloodbank.service.DonorService;
+import com.bloodbank.service.InventoryService;
 import com.bloodbank.ui.LoginFrame;
 
 import javax.swing.JOptionPane;
@@ -22,17 +24,19 @@ import java.sql.SQLException;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
  * Application entry point.
- * Console smoke tests: --test-auth, --test-donors, --test-donations.
+ * Console smoke tests: --test-auth, --test-donors, --test-donations, --test-inventory.
  */
 public class Main {
 
     private static final String TEST_ARG = "--test-auth";
     private static final String DONOR_TEST_ARG = "--test-donors";
     private static final String DONATION_TEST_ARG = "--test-donations";
+    private static final String INVENTORY_TEST_ARG = "--test-inventory";
 
     public static void main(String[] args) {
         try {
@@ -57,6 +61,10 @@ public class Main {
                 runDonationTest();
                 return;
             }
+            if (args.length > 0 && INVENTORY_TEST_ARG.equals(args[0])) {
+                runInventoryTest();
+                return;
+            }
 
             UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
             SwingUtilities.invokeLater(() -> {
@@ -75,7 +83,8 @@ public class Main {
             e.printStackTrace();
             boolean consoleTest = args.length > 0
                     && (TEST_ARG.equals(args[0]) || DONOR_TEST_ARG.equals(args[0])
-                    || DONATION_TEST_ARG.equals(args[0]));
+                    || DONATION_TEST_ARG.equals(args[0])
+                    || INVENTORY_TEST_ARG.equals(args[0]));
             if (!consoleTest) {
                 JOptionPane.showMessageDialog(null,
                         "Startup failed: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
@@ -345,6 +354,109 @@ public class Main {
             }
         }
         for (int donorId : donorIds) {
+            deleteDonationTestRows(donorId);
+        }
+    }
+
+    private static void runInventoryTest() throws SQLException {
+        System.out.println();
+        System.out.println("Inventory smoke test:");
+        cleanupDonationTestData("M6 Test Donor");
+
+        // Use a group with no existing units so the test never depends on user data.
+        String testGroup = null;
+        for (Map.Entry<String, Integer> entry
+                : InventoryService.getAvailableCountsByGroup().entrySet()) {
+            if (entry.getValue() == 0) {
+                testGroup = entry.getKey();
+                break;
+            }
+        }
+        if (testGroup == null) {
+            throw new SQLException("Every blood group already has available units. "
+                    + "The inventory test needs at least one empty group.");
+        }
+
+        Donor donor = DonorService.add(new Donor("M6 Test Donor", 30, "Female", testGroup,
+                "5552223333", "Test address"));
+        int donorId = donor.getDonorId();
+        System.out.println("  DONOR ok - donor_id = " + donorId + ", group = " + testGroup);
+
+        try {
+            LocalDate today = LocalDate.now();
+            Donation older = DonationService.add(new Donation(donorId, today.minusDays(10),
+                    350, "ACCEPTED", "older plasma"), BloodComponent.PLASMA);
+            Donation newer = DonationService.add(new Donation(donorId, today.minusDays(2),
+                    350, "ACCEPTED", "newer plasma"), BloodComponent.PLASMA);
+            Donation expired = DonationService.add(new Donation(donorId, today.minusDays(40),
+                    350, "ACCEPTED", "expired whole blood"), BloodComponent.WHOLE_BLOOD);
+
+            InventoryService.refreshStatuses();
+            List<BloodUnit> fefo = InventoryService.findAvailableForIssue(testGroup, 1);
+            if (fefo.size() != 1 || fefo.get(0).getDonationId() != older.getDonationId()) {
+                throw new SQLException("FEFO did not select the earliest-expiring unit.");
+            }
+            System.out.println("  FEFO ok - oldest expiring unit selected");
+
+            Map<String, Integer> counts = InventoryService.getAvailableCountsByGroup();
+            if (counts.get(testGroup) != 2) {
+                throw new SQLException("Available counts were not derived from unit rows.");
+            }
+            System.out.println("  STOCK by group ok - " + testGroup + " available = "
+                    + counts.get(testGroup));
+
+            List<BloodUnit> expiredUnits = InventoryService.search(
+                    String.valueOf(expired.getDonationId()), testGroup, "EXPIRED");
+            if (expiredUnits.size() != 1
+                    || expiredUnits.get(0).getDonationId() != expired.getDonationId()) {
+                throw new SQLException("Expired unit was not flagged automatically.");
+            }
+            System.out.println("  EXPIRY detection ok - expired unit flagged");
+
+            int unitId = fefo.get(0).getUnitId();
+            InventoryService.setStatus(unitId, "QUARANTINED");
+            List<BloodUnit> afterQuarantine = InventoryService.findAvailableForIssue(testGroup, 1);
+            if (afterQuarantine.size() != 1
+                    || afterQuarantine.get(0).getDonationId() != newer.getDonationId()) {
+                throw new SQLException("Quarantined unit was still offered for issuing.");
+            }
+            System.out.println("  QUARANTINE ok - unit excluded from FEFO");
+
+            InventoryService.setStatus(unitId, "AVAILABLE");
+            if (InventoryService.findAvailableForIssue(testGroup, 2).size() != 2) {
+                throw new SQLException("Released unit was not available again.");
+            }
+            System.out.println("  RELEASE ok - unit available again");
+
+            List<BloodUnit> byId = InventoryService.search(
+                    String.valueOf(unitId), testGroup, "AVAILABLE");
+            if (byId.isEmpty() || byId.get(0).getUnitId() != unitId) {
+                throw new SQLException("Unit ID filter did not find the unit.");
+            }
+            System.out.println("  SEARCH ok - unit ID filter");
+
+            try {
+                InventoryService.findAvailableForIssue(testGroup, 3);
+                throw new SQLException("Insufficient stock was not detected.");
+            } catch (IllegalStateException expected) {
+                System.out.println("  INSUFFICIENT stock: rejected");
+            }
+
+            try {
+                InventoryService.setStatus(unitId, "ISSUED");
+                throw new SQLException("Manual ISSUED status change was accepted.");
+            } catch (IllegalArgumentException expected) {
+                System.out.println("  INVALID status change: rejected");
+            }
+
+            List<BloodUnit> both = InventoryService.findAvailableForIssue(testGroup, 2);
+            if (both.size() != 2
+                    || both.get(0).getDonationId() != older.getDonationId()
+                    || both.get(1).getDonationId() != newer.getDonationId()) {
+                throw new SQLException("FEFO order across both units was incorrect.");
+            }
+            System.out.println("Inventory test completed successfully.");
+        } finally {
             deleteDonationTestRows(donorId);
         }
     }
