@@ -42,6 +42,7 @@ public class MainFrame extends JFrame {
     private final JPanel contentPanel = new JPanel(cardLayout);
     private final Map<String, JButton> navigationButtons = new LinkedHashMap<>();
     private final DashboardPanel dashboardPanel = new DashboardPanel();
+    private final InventoryPanel inventoryPanel = new InventoryPanel();
     private final ReportsPanel reportsPanel = new ReportsPanel();
     private boolean navigationReady;
 
@@ -60,7 +61,7 @@ public class MainFrame extends JFrame {
         contentPanel.add(new DonorPanel(), DONORS);
         contentPanel.add(new PatientPanel(), PATIENTS);
         contentPanel.add(new DonationPanel(), DONATIONS);
-        contentPanel.add(new InventoryPanel(), INVENTORY);
+        contentPanel.add(inventoryPanel, INVENTORY);
         contentPanel.add(new RequestPanel(), REQUESTS);
         contentPanel.add(reportsPanel, REPORTS);
         add(contentPanel, BorderLayout.CENTER);
@@ -149,10 +150,12 @@ public class MainFrame extends JFrame {
         navigationButtons.forEach((name, button) ->
                 button.setBackground(name.equals(card) ? UIComponents.RED : UIComponents.DARK));
 
-        // Panels load once in their constructors. Refresh live summaries when revisited.
+        // Panels load once in their constructors. Refresh live data when revisited.
         if (navigationReady) {
             if (DASHBOARD.equals(card)) {
                 dashboardPanel.reload();
+            } else if (INVENTORY.equals(card)) {
+                inventoryPanel.reload();
             } else if (REPORTS.equals(card)) {
                 reportsPanel.reload();
             }

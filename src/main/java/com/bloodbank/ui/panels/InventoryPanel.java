@@ -129,6 +129,13 @@ public class InventoryPanel extends JPanel {
         loadUnits();
     }
 
+    /** Called when the Inventory card becomes visible so new/expired units are not stale. */
+    public void reload() {
+        if (!busy) {
+            loadUnits();
+        }
+    }
+
     private JPanel createToolbar() {
         JPanel toolbar = new JPanel(new FlowLayout(FlowLayout.LEFT));
         toolbar.setBackground(Color.WHITE);
