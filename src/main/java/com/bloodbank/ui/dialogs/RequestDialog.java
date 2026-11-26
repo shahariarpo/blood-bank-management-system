@@ -18,6 +18,7 @@ import javax.swing.JTextField;
 import javax.swing.SwingWorker;
 import java.awt.BorderLayout;
 import java.awt.Component;
+import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Frame;
 import java.awt.GridBagConstraints;
@@ -37,8 +38,8 @@ public class RequestDialog extends JDialog {
     private final Map<String, Patient> patientsByLabel = new LinkedHashMap<>();
     private final JComboBox<String> bloodGroupCombo =
             new JComboBox<>(Validators.BLOOD_GROUPS.toArray(new String[0]));
-    private final JTextField quantityField = new JTextField("1", 8);
-    private final JTextField dateField = new JTextField(LocalDate.now().toString(), 12);
+    private final JTextField quantityField = new JTextField("1", 12);
+    private final JTextField dateField = new JTextField(LocalDate.now().toString(), 14);
     private final JComboBox<String> priorityCombo =
             new JComboBox<>(RequestService.PRIORITIES.toArray(new String[0]));
     private final JButton saveButton = UIComponents.createPrimaryButton("Save request");
@@ -49,6 +50,8 @@ public class RequestDialog extends JDialog {
         super(owner, "New blood request", true);
         buildUi();
         pack();
+        setSize(640, 360);
+        setMinimumSize(new Dimension(560, 330));
         setLocationRelativeTo(owner);
         loadPatients();
         setVisible(true);
@@ -91,8 +94,13 @@ public class RequestDialog extends JDialog {
                           String label, Component field) {
         c.gridx = 0;
         c.gridy = row;
+        c.weightx = 0;
+        c.fill = GridBagConstraints.NONE;
+        c.anchor = GridBagConstraints.LINE_END;
         panel.add(new JLabel(label), c);
         c.gridx = 1;
+        c.weightx = 1;
+        c.fill = GridBagConstraints.HORIZONTAL;
         c.anchor = GridBagConstraints.LINE_START;
         panel.add(field, c);
         c.anchor = GridBagConstraints.LINE_END;
