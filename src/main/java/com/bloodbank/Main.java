@@ -5,14 +5,22 @@ import com.bloodbank.database.DatabaseConnection;
 import com.bloodbank.database.DatabaseInitializer;
 import com.bloodbank.model.Admin;
 import com.bloodbank.model.BloodComponent;
+import com.bloodbank.model.BloodIssue;
+import com.bloodbank.model.BloodRequest;
 import com.bloodbank.model.BloodUnit;
 import com.bloodbank.model.Donation;
 import com.bloodbank.model.Donor;
+import com.bloodbank.model.Patient;
 import com.bloodbank.service.AuthService;
 import com.bloodbank.service.DonationService;
 import com.bloodbank.service.DonorService;
 import com.bloodbank.service.InventoryService;
+import com.bloodbank.service.IssueService;
+import com.bloodbank.service.PatientService;
+import com.bloodbank.service.RequestService;
 import com.bloodbank.ui.LoginFrame;
+import com.bloodbank.util.BloodCompatibility;
+import com.bloodbank.util.Validators;
 
 import javax.swing.JOptionPane;
 import javax.swing.SwingUtilities;
@@ -29,7 +37,8 @@ import java.util.Optional;
 
 /**
  * Application entry point.
- * Console smoke tests: --test-auth, --test-donors, --test-donations, --test-inventory.
+ * Console smoke tests: --test-auth, --test-donors, --test-donations,
+ * --test-inventory, --test-requests.
  */
 public class Main {
 
@@ -37,6 +46,7 @@ public class Main {
     private static final String DONOR_TEST_ARG = "--test-donors";
     private static final String DONATION_TEST_ARG = "--test-donations";
     private static final String INVENTORY_TEST_ARG = "--test-inventory";
+    private static final String REQUEST_TEST_ARG = "--test-requests";
 
     public static void main(String[] args) {
         try {
@@ -65,6 +75,10 @@ public class Main {
                 runInventoryTest();
                 return;
             }
+            if (args.length > 0 && REQUEST_TEST_ARG.equals(args[0])) {
+                runRequestTest();
+                return;
+            }
 
             UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
             SwingUtilities.invokeLater(() -> {
@@ -84,7 +98,8 @@ public class Main {
             boolean consoleTest = args.length > 0
                     && (TEST_ARG.equals(args[0]) || DONOR_TEST_ARG.equals(args[0])
                     || DONATION_TEST_ARG.equals(args[0])
-                    || INVENTORY_TEST_ARG.equals(args[0]));
+                    || INVENTORY_TEST_ARG.equals(args[0])
+                    || REQUEST_TEST_ARG.equals(args[0]));
             if (!consoleTest) {
                 JOptionPane.showMessageDialog(null,
                         "Startup failed: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
@@ -459,5 +474,197 @@ public class Main {
         } finally {
             deleteDonationTestRows(donorId);
         }
+    }
+
+    private static void runRequestTest() throws SQLException {
+        System.out.println();
+        System.out.println("Request and issuing smoke test:");
+        cleanupRequestTestData();
+
+        if (!BloodCompatibility.compatibleDonorGroups("O-").equals(List.of("O-"))
+                || !BloodCompatibility.compatibleDonorGroups("A+")
+                        .containsAll(List.of("A+", "A-", "O+", "O-"))
+                || BloodCompatibility.compatibleDonorGroups("A+").contains("B+")) {
+            throw new SQLException("Illustrative ABO/Rh compatibility rules are incorrect.");
+        }
+        System.out.println("  COMPAT ok - illustrative ABO/Rh rules");
+
+        // Choose a patient group whose compatible donor groups currently have no units.
+        String patientGroup = null;
+        Map<String, Integer> counts = InventoryService.getAvailableCountsByGroup();
+        for (String candidate : Validators.BLOOD_GROUPS) {
+            boolean empty = true;
+            for (String donorGroup : BloodCompatibility.compatibleDonorGroups(candidate)) {
+                if (counts.getOrDefault(donorGroup, 0) > 0) {
+                    empty = false;
+                    break;
+                }
+            }
+            if (empty) {
+                patientGroup = candidate;
+                break;
+            }
+        }
+        if (patientGroup == null) {
+            throw new SQLException("Every patient group has compatible available units. "
+                    + "The request test needs at least one empty compatibility set.");
+        }
+
+        Patient patient = PatientService.add(new Patient("M7 Test Patient", 40, "Female",
+                patientGroup, "5553334444", "Test Hospital"));
+        int donorId = 0;
+        System.out.println("  PATIENT ok - patient_id = " + patient.getPatientId()
+                + ", group = " + patientGroup);
+
+        try {
+            BloodRequest blocked = RequestService.add(new BloodRequest(
+                    patient.getPatientId(), patientGroup, 2, LocalDate.now(), "NORMAL"));
+            try {
+                PatientService.delete(patient.getPatientId());
+                throw new SQLException("Patient deletion should have been blocked by a request.");
+            } catch (IllegalStateException expected) {
+                System.out.println("  FK delete protection: OK");
+            }
+
+            RequestService.reject(blocked.getRequestId());
+            try {
+                RequestService.approve(blocked.getRequestId());
+                throw new SQLException("A REJECTED request was approved.");
+            } catch (IllegalStateException expected) {
+                System.out.println("  STATUS guard: rejected request cannot be approved");
+            }
+
+            Donor donor = DonorService.add(new Donor("M7 Test Donor", 30, "Male", patientGroup,
+                    "5554445555", "Test address"));
+            donorId = donor.getDonorId();
+            LocalDate collectionDate = LocalDate.now().minusDays(2);
+            DonationService.add(new Donation(donorId, collectionDate, 350,
+                    "ACCEPTED", "fefo red cells"), BloodComponent.RED_CELLS);
+            DonationService.add(new Donation(donorId, collectionDate, 350,
+                    "ACCEPTED", "later plasma"), BloodComponent.PLASMA);
+            System.out.println("  UNITS ok - donor_id = " + donorId);
+
+            BloodRequest full = RequestService.add(new BloodRequest(
+                    patient.getPatientId(), patientGroup, 1, LocalDate.now(), "URGENT"));
+            RequestService.approve(full.getRequestId());
+            IssueService.IssueResult fullResult = IssueService.issue(full.getRequestId(), 1, false);
+            String fullStatus = RequestService.getById(full.getRequestId())
+                    .orElseThrow().getStatus();
+            if (fullResult.getIssuedUnits() != 1 || !"FULFILLED".equals(fullStatus)) {
+                throw new SQLException("Full issue did not fulfill the request.");
+            }
+            BloodIssue firstIssue = IssueService.getIssuingHistory().stream()
+                    .filter(issue -> issue.getRequestId() == full.getRequestId())
+                    .findFirst()
+                    .orElseThrow(() -> new SQLException("Issuing history was not recorded."));
+            if (!"RED_CELLS".equals(firstIssue.getComponentType())) {
+                throw new SQLException("FEFO did not select the earliest-expiring unit.");
+            }
+            System.out.println("  FULL ISSUE ok - FEFO selected RED_CELLS");
+
+            int issuesAfterFull = countIssuesForRequest(full.getRequestId());
+            try {
+                IssueService.issue(full.getRequestId(), 1, false);
+                throw new SQLException("A fulfilled request was issued again.");
+            } catch (IllegalStateException expected) {
+                System.out.println("  DUPLICATE issue: rejected");
+            }
+            if (countIssuesForRequest(full.getRequestId()) != issuesAfterFull) {
+                throw new SQLException("A duplicate issue wrote an extra blood_issues row.");
+            }
+
+            BloodRequest partial = RequestService.add(new BloodRequest(
+                    patient.getPatientId(), patientGroup, 2, LocalDate.now(), "CRITICAL"));
+            RequestService.approve(partial.getRequestId());
+            try {
+                IssueService.issue(partial.getRequestId(), 2, false);
+                throw new SQLException("Insufficient stock was issued without partial consent.");
+            } catch (IllegalStateException expected) {
+                System.out.println("  PARTIAL guard: rejected");
+            }
+            if (countIssuesForRequest(partial.getRequestId()) != 0) {
+                throw new SQLException("Rejected partial issue wrote a blood_issues row.");
+            }
+
+            IssueService.IssueResult partialResult =
+                    IssueService.issue(partial.getRequestId(), 2, true);
+            String partialStatus = RequestService.getById(partial.getRequestId())
+                    .orElseThrow().getStatus();
+            if (partialResult.getIssuedUnits() != 1
+                    || !"PARTIALLY_FULFILLED".equals(partialStatus)) {
+                throw new SQLException("Partial issue did not mark the request PARTIALLY_FULFILLED.");
+            }
+            System.out.println("  PARTIAL ISSUE ok - 1 unit issued, request partially fulfilled");
+
+            int issuesAfterPartial = countIssuesForRequest(partial.getRequestId());
+            try {
+                IssueService.issue(partial.getRequestId(), 1, false);
+                throw new SQLException("Issuing from depleted compatible stock was accepted.");
+            } catch (IllegalStateException expected) {
+                System.out.println("  DEPLETED stock: rejected");
+            }
+            if (countIssuesForRequest(partial.getRequestId()) != issuesAfterPartial) {
+                throw new SQLException("A rejected issue wrote an extra blood_issues row.");
+            }
+
+            System.out.println("Request and issuing test completed successfully.");
+        } finally {
+            deleteRequestTestRows(patient.getPatientId());
+            if (donorId > 0) {
+                deleteDonationTestRows(donorId);
+            }
+        }
+    }
+
+    private static int countIssuesForRequest(int requestId) throws SQLException {
+        String sql = "SELECT COUNT(*) FROM blood_issues WHERE request_id = ?";
+        try (Connection connection = DatabaseConnection.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setInt(1, requestId);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                resultSet.next();
+                return resultSet.getInt(1);
+            }
+        }
+    }
+
+    private static void deleteRequestTestRows(int patientId) throws SQLException {
+        try (Connection connection = DatabaseConnection.getConnection();
+             PreparedStatement statement = connection.prepareStatement(
+                     "DELETE FROM blood_issues WHERE request_id IN "
+                             + "(SELECT request_id FROM blood_requests WHERE patient_id = ?)")) {
+            statement.setInt(1, patientId);
+            statement.executeUpdate();
+        }
+        try (Connection connection = DatabaseConnection.getConnection();
+             PreparedStatement statement = connection.prepareStatement(
+                     "DELETE FROM blood_requests WHERE patient_id = ?")) {
+            statement.setInt(1, patientId);
+            statement.executeUpdate();
+        }
+        try (Connection connection = DatabaseConnection.getConnection();
+             PreparedStatement statement = connection.prepareStatement(
+                     "DELETE FROM patients WHERE patient_id = ?")) {
+            statement.setInt(1, patientId);
+            statement.executeUpdate();
+        }
+    }
+
+    private static void cleanupRequestTestData() throws SQLException {
+        List<Integer> patientIds = new ArrayList<>();
+        String select = "SELECT patient_id FROM patients WHERE name = ?";
+        try (Connection connection = DatabaseConnection.getConnection();
+             PreparedStatement statement = connection.prepareStatement(select)) {
+            statement.setString(1, "M7 Test Patient");
+            try (ResultSet resultSet = statement.executeQuery()) {
+                while (resultSet.next()) {
+                    patientIds.add(resultSet.getInt("patient_id"));
+                }
+            }
+        }
+        for (int patientId : patientIds) {
+            deleteRequestTestRows(patientId);
+        }
+        cleanupDonationTestData("M7 Test Donor");
     }
 }

@@ -5,6 +5,7 @@ import com.bloodbank.ui.panels.DashboardPanel;
 import com.bloodbank.ui.panels.DonationPanel;
 import com.bloodbank.ui.panels.DonorPanel;
 import com.bloodbank.ui.panels.InventoryPanel;
+import com.bloodbank.ui.panels.PatientPanel;
 import com.bloodbank.ui.panels.ReportsPanel;
 import com.bloodbank.ui.panels.RequestPanel;
 
@@ -31,6 +32,7 @@ public class MainFrame extends JFrame {
 
     private static final String DASHBOARD = "dashboard";
     private static final String DONORS = "donors";
+    private static final String PATIENTS = "patients";
     private static final String DONATIONS = "donations";
     private static final String INVENTORY = "inventory";
     private static final String REQUESTS = "requests";
@@ -53,6 +55,7 @@ public class MainFrame extends JFrame {
         contentPanel.setBackground(UIComponents.LIGHT_GREY);
         contentPanel.add(new DashboardPanel(), DASHBOARD);
         contentPanel.add(new DonorPanel(), DONORS);
+        contentPanel.add(new PatientPanel(), PATIENTS);
         contentPanel.add(new DonationPanel(), DONATIONS);
         contentPanel.add(new InventoryPanel(), INVENTORY);
         contentPanel.add(new RequestPanel(), REQUESTS);
@@ -75,6 +78,7 @@ public class MainFrame extends JFrame {
         Map<String, String> navigation = new LinkedHashMap<>();
         navigation.put("Dashboard", DASHBOARD);
         navigation.put("Donors", DONORS);
+        navigation.put("Patients", PATIENTS);
         navigation.put("Donations", DONATIONS);
         navigation.put("Inventory", INVENTORY);
         navigation.put("Requests", REQUESTS);

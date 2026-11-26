@@ -13,7 +13,7 @@ Location: `/home/arpo/Projects/Blood Bank Management System`
 | 4 | Donor management | **DONE** |
 | 5 | Donation management | **DONE** |
 | 6 | Inventory | **DONE** |
-| 7 | Patient and request management | **NOT DONE** |
+| 7 | Patient and request management | **DONE** |
 | 8 | Dashboard, reports and final testing | **NOT DONE** |
 
 ---
@@ -50,6 +50,7 @@ Location: `/home/arpo/Projects/Blood Bank Management System`
   java -jar target/blood-bank-management-system-1.0-SNAPSHOT.jar --test-donors
   java -jar target/blood-bank-management-system-1.0-SNAPSHOT.jar --test-donations
   java -jar target/blood-bank-management-system-1.0-SNAPSHOT.jar --test-inventory
+  java -jar target/blood-bank-management-system-1.0-SNAPSHOT.jar --test-requests
   ```
 
 ---
@@ -138,17 +139,20 @@ Location: `/home/arpo/Projects/Blood Bank Management System`
 - Verified: clean build, all four console tests pass, test data is removed, GUI launches without exceptions.
 - Note: FEFO here only selects units; Milestone 7 will perform transactional issuing.
 
-## Milestone 7 — Patient and request management — **NOT DONE**
+## Milestone 7 — Patient and request management — **DONE**
 
-- [ ] `Patient` model, `PatientDialog`, patient registration/search/update.
-- [ ] `BloodRequest` model, `BloodRequestDAO`, `RequestService`.
-- [ ] `BloodIssue` model and issuing workflow.
-- [ ] `RequestDialog` for creating requests (priority `NORMAL`/`URGENT`/`CRITICAL`).
-- [ ] Approve / reject requests; track fulfillment statuses.
-- [ ] Issuing: verify approved request, match blood group by project compatibility rules, exclude expired/quarantined units, select by FEFO, record each unit, update inventory and request status.
-- [ ] All issuing changes in **one SQL transaction** with rollback on failure.
-- [ ] Prevent issuing the same unit twice (unique `unit_id` in `blood_issues`).
-- [ ] UI note: ABO/Rh compatibility is **not** clinical authorization; real transfusion needs laboratory crossmatching and clinical approval.
+- [x] `Patient` model, `PatientDAO`, `PatientService`, `PatientDialog` and real `PatientPanel`.
+- [x] Added a **Patients** card to `MainFrame` sidebar.
+- [x] `BloodRequest` model, joined `BloodRequestDAO`, `RequestService`, `RequestDialog`.
+- [x] `BloodIssue` model and joined `BloodIssueDAO` for issuing history.
+- [x] Real `RequestPanel` with requests table, status filter, search, approve/reject/issue actions and issuing history.
+- [x] Priorities: `NORMAL`, `URGENT`, `CRITICAL`; request statuses tracked through PENDING/APPROVED/PARTIALLY_FULFILLED/FULFILLED/REJECTED/CANCELLED.
+- [x] `BloodCompatibility` utility with illustrative ABO/Rh donor-group rules; explicitly not clinical authorization.
+- [x] `IssueDialog` previews eligible FEFO units, asks for issue quantity and requires explicit partial-issue consent.
+- [x] `IssueService.issue()` verifies request status, excludes expired/quarantined units, selects compatible units by FEFO, updates units to ISSUED, records `blood_issues`, and updates request status in **one SQL transaction** with rollback on failure.
+- [x] Duplicate issuing is prevented by status gating and the existing UNIQUE constraint on `blood_issues.unit_id`.
+- [x] Console smoke test `--test-requests` (compatibility rules, FK protection, status guard, full FEFO issue, duplicate rejection, partial-issue guard, partial issue, depleted stock rejection).
+- [x] UI note: ABO/Rh compatibility is **not** clinical authorization; real transfusion needs laboratory crossmatching and clinical approval.
 
 ## Milestone 8 — Dashboard, reports and final testing — **NOT DONE**
 

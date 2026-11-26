@@ -11,6 +11,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -126,21 +127,56 @@ public final class BloodUnitDAO {
         });
     }
 
+    /** FEFO across several compatible groups, ordered globally by expiry date. */
+    public static List<BloodUnit> findAvailableForCompatibleGroups(List<String> bloodGroups,
+                                                                   int limit,
+                                                                   LocalDate today)
+            throws SQLException {
+        if (bloodGroups == null || bloodGroups.isEmpty()) {
+            return List.of();
+        }
+        String placeholders = String.join(",", Collections.nCopies(bloodGroups.size(), "?"));
+        String sql = SELECT_JOINED
+                + " WHERE bu.status = 'AVAILABLE' AND bu.expiry_date > ?"
+                + " AND bu.blood_group IN (" + placeholders + ")"
+                + " ORDER BY bu.expiry_date ASC, bu.unit_id ASC LIMIT ?";
+        return query(sql, statement -> {
+            statement.setString(1, today.toString());
+            for (int i = 0; i < bloodGroups.size(); i++) {
+                statement.setString(i + 2, bloodGroups.get(i));
+            }
+            statement.setInt(bloodGroups.size() + 2, limit);
+        });
+    }
+
     /** Flags expired AVAILABLE or QUARANTINED units. ISSUED units are never auto-expired. */
     public static int expireUnits(LocalDate today) throws SQLException {
+        try (Connection connection = DatabaseConnection.getConnection()) {
+            return expireUnits(connection, today);
+        }
+    }
+
+    /** Caller-supplied connection allows expiry refresh inside an issuing transaction. */
+    public static int expireUnits(Connection connection, LocalDate today) throws SQLException {
         String sql = "UPDATE blood_units SET status = 'EXPIRED' "
                 + "WHERE status IN ('AVAILABLE', 'QUARANTINED') AND expiry_date <= ?";
-        try (Connection connection = DatabaseConnection.getConnection();
-             PreparedStatement statement = connection.prepareStatement(sql)) {
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, today.toString());
             return statement.executeUpdate();
         }
     }
 
     public static boolean updateStatus(int unitId, String status) throws SQLException {
+        try (Connection connection = DatabaseConnection.getConnection()) {
+            return updateStatus(connection, unitId, status);
+        }
+    }
+
+    /** Caller-supplied connection allows unit status changes to join a transaction. */
+    public static boolean updateStatus(Connection connection, int unitId, String status)
+            throws SQLException {
         String sql = "UPDATE blood_units SET status = ? WHERE unit_id = ?";
-        try (Connection connection = DatabaseConnection.getConnection();
-             PreparedStatement statement = connection.prepareStatement(sql)) {
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, status);
             statement.setInt(2, unitId);
             return statement.executeUpdate() > 0;
