@@ -11,7 +11,7 @@ Location: `/home/arpo/Projects/Blood Bank Management System`
 | 2 | Authentication | **DONE** |
 | 3 | Main UI | **DONE** |
 | 4 | Donor management | **DONE** |
-| 5 | Donation management | **NOT DONE** |
+| 5 | Donation management | **DONE** |
 | 6 | Inventory | **NOT DONE** |
 | 7 | Patient and request management | **NOT DONE** |
 | 8 | Dashboard, reports and final testing | **NOT DONE** |
@@ -48,6 +48,7 @@ Location: `/home/arpo/Projects/Blood Bank Management System`
   java -jar target/blood-bank-management-system-1.0-SNAPSHOT.jar
   java -jar target/blood-bank-management-system-1.0-SNAPSHOT.jar --test-auth
   java -jar target/blood-bank-management-system-1.0-SNAPSHOT.jar --test-donors
+  java -jar target/blood-bank-management-system-1.0-SNAPSHOT.jar --test-donations
   ```
 
 ---
@@ -98,21 +99,28 @@ Location: `/home/arpo/Projects/Blood Bank Management System`
 - [x] Delete only when referential integrity allows; friendly error when donations reference the donor.
 - [x] Console smoke test `--test-donors` (add, age validation, duplicate, search, update, FK delete protection, delete).
 - Blood groups: `A+, A-, B+, B-, AB+, AB-, O+, O-`; age >= 18.
-- Note: full donation management (including creating donations) is still Milestone 5; `Donation`/`DonationDAO` are currently read-only.
+- Note: `DonationDAO.findByDonorId` is now shared by the donor profile and the full donation module.
 
-## Milestone 5 — Donation management — **NOT DONE**
+## Milestone 5 — Donation management — **DONE**
 
-- [ ] `Donation` model and `DonationDAO`.
-- [ ] `DonationService` with screening status rules (`PENDING`, `ACCEPTED`, `REJECTED`).
-- [ ] `DonationDialog` for recording donations (date, quantity_ml, notes).
-- [ ] Real `DonationPanel` with donation history table.
-- [ ] Only `ACCEPTED` donations create available blood units.
-- [ ] Prevent invalid or duplicate processing of the same donation.
-- [ ] Calculate component expiry dates (do not assume identical expiry periods).
+- [x] `Donation` model expanded with donor name/blood group for joined history queries.
+- [x] `BloodComponent` enum with illustrative shelf lives (whole blood 35, red cells 42, plasma 365, platelets 5 days).
+- [x] `BloodUnit` model and minimal `BloodUnitDAO` insert/duplicate guard (listing/filtering deferred to Milestone 6).
+- [x] `DonationDAO` with joined findAll/findByDonorId/search/findById, insert, transactional accept and reject.
+- [x] `DonationService` with screening status rules (`PENDING`, `ACCEPTED`, `REJECTED`), date/quantity validation and component expiry calculation.
+- [x] `DonationDialog` for recording donations (donor, date, quantity, screening status, component, notes).
+- [x] `DonationProcessDialog` for accepting or rejecting a PENDING donation.
+- [x] Real `DonationPanel` with searchable donation history and Process action enabled only for PENDING rows.
+- [x] Only `ACCEPTED` donations create `AVAILABLE` blood units; REJECTED/PENDING do not.
+- [x] Accept and unit insertion happen in one SQL transaction; accepted/already-processed donations cannot be processed again.
+- [x] Console smoke test `--test-donations` (pending, accept + expiry, duplicate process, accepted-on-record, rejected, future date, invalid quantity).
+- Verified: clean build, all three console tests pass, database counts return to 0/0/0, GUI launches without exceptions.
+- Note: expiry periods are illustrative; real laboratory policy governs clinical use.
 
 ## Milestone 6 — Inventory — **NOT DONE**
 
-- [ ] `BloodUnit` model and `BloodUnitDAO`.
+- [x] `BloodUnit` model and minimal `BloodUnitDAO` insert/duplicate guard (added in Milestone 5).
+- [ ] Expand `BloodUnitDAO` with listing, filtering and status management (Milestone 6).
 - [ ] `InventoryService` for filtering, stock calculation, expiry monitoring, status management.
 - [ ] Real `InventoryPanel`: list units, filter by blood group and availability, search by unit ID.
 - [ ] Statuses: `AVAILABLE`, `ISSUED`, `EXPIRED`, `QUARANTINED`.
