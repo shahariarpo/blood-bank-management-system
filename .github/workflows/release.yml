@@ -1,0 +1,177 @@
+name: Release binaries
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  linux-appimage:
+    name: Linux AppImage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Build runnable JAR
+        run: ./mvnw -q clean package
+
+      - name: Resolve application version
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          case "$version" in
+            [0-9]* ) ;;
+            *) version="1.0.0" ;;
+          esac
+          echo "APP_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Create jpackage application image
+        run: |
+          set -euo pipefail
+          mkdir -p build/jar build/jpackage
+          cp target/blood-bank-management-system-1.0-SNAPSHOT.jar build/jar/bloodbank.jar
+          jpackage \
+            --type app-image \
+            --input build/jar \
+            --main-jar bloodbank.jar \
+            --main-class com.bloodbank.Main \
+            --name BloodBankManagementSystem \
+            --app-version "$APP_VERSION" \
+            --jlink-options "--strip-debug --no-man-pages --no-header-files" \
+            --dest build/jpackage
+
+      - name: Assemble AppDir
+        run: |
+          set -euo pipefail
+          mkdir -p build/AppDir/usr/bin \
+                   build/AppDir/usr/lib/bloodbank \
+                   build/AppDir/usr/share/applications
+          cp -a build/jpackage/BloodBankManagementSystem/. build/AppDir/usr/lib/bloodbank/
+          cp packaging/launcher.sh build/AppDir/usr/bin/BloodBankManagementSystem
+          cp packaging/AppRun build/AppDir/AppRun
+          cp packaging/bloodbank.desktop build/AppDir/usr/share/applications/bloodbank.desktop
+          chmod +x build/AppDir/AppRun
+          chmod +x build/AppDir/usr/bin/BloodBankManagementSystem
+          chmod +x build/AppDir/usr/lib/bloodbank/lib/runtime/bin/java
+          rm -f build/AppDir/usr/lib/bloodbank/bin/BloodBankManagementSystem
+          rm -f build/AppDir/usr/lib/bloodbank/lib/libapplauncher.so
+
+      - name: Download linuxdeploy
+        run: |
+          set -euo pipefail
+          mkdir -p build/tools
+          curl -fL -o build/tools/linuxdeploy-x86_64.AppImage \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x build/tools/linuxdeploy-x86_64.AppImage
+
+      - name: Build AppImage
+        run: |
+          set -euo pipefail
+          mkdir -p build/dist
+          LDAI_OUTPUT="$GITHUB_WORKSPACE/build/dist/BloodBankManagementSystem-${APP_VERSION}.AppImage" \
+            build/tools/linuxdeploy-x86_64.AppImage --appimage-extract-and-run \
+              --appdir build/AppDir \
+              --desktop-file build/AppDir/usr/share/applications/bloodbank.desktop \
+              --icon-file packaging/bloodbank.png \
+              --exclude-library=libjvm.so \
+              --output appimage
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-appimage
+          path: build/dist/*.AppImage
+          if-no-files-found: error
+
+  windows-exe:
+    name: Windows EXE installer
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Build runnable JAR
+        shell: pwsh
+        run: .\mvnw.cmd -q clean package
+
+      - name: Resolve application version
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          if ($version -notmatch '^\d') { $version = '1.0.0' }
+          "APP_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Ensure WiX Toolset is available
+        shell: pwsh
+        run: |
+          if (-not (Get-Command candle.exe -ErrorAction SilentlyContinue)) {
+            choco install wixtoolset -y --no-progress
+            $wixBin = 'C:\Program Files (x86)\WiX Toolset v3.14\bin'
+            $env:PATH = "$wixBin;$env:PATH"
+            "PATH=$wixBin;$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Append
+          }
+
+      - name: Create Windows installer
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build/jar, build/dist | Out-Null
+          Copy-Item target\blood-bank-management-system-1.0-SNAPSHOT.jar build\jar\bloodbank.jar
+          jpackage `
+            --type exe `
+            --input build\jar `
+            --main-jar bloodbank.jar `
+            --main-class com.bloodbank.Main `
+            --name BloodBankManagementSystem `
+            --app-version $env:APP_VERSION `
+            --vendor "Blood Bank Management System" `
+            --description "Blood Bank Management System" `
+            --win-dir-chooser `
+            --win-menu `
+            --win-shortcut `
+            --win-upgrade-uuid "2f1a3e6c-7b9d-4c2e-9f4a-8d5e1c3b7a90" `
+            --dest build\dist
+          $exe = Get-ChildItem build\dist -Filter *.exe | Select-Object -First 1
+          if (-not $exe) { throw "jpackage did not produce an EXE installer" }
+          Move-Item $exe.FullName "build\dist\BloodBankManagementSystem-$env:APP_VERSION.exe"
+
+      - name: Upload EXE installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe
+          path: build/dist/*.exe
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: [linux-appimage, windows-exe]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create release and attach binaries
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/linux-appimage/*.AppImage
+            artifacts/windows-exe/*.exe
+          generate_release_notes: true

@@ -39,6 +39,9 @@ Swing UI  ->  Service  ->  DAO  ->  SQLite
 
 ```text
 Blood Bank Management System/
+├── .github/
+│   └── workflows/
+│       └── release.yml                  # Builds AppImage + EXE on version tags
 ├── .mvn/
 │   └── wrapper/
 │       └── maven-wrapper.properties     # Maven 3.9.9 wrapper configuration
@@ -110,6 +113,11 @@ Blood Bank Management System/
 │       └── resources/
 │           └── database/
 │               └── schema.sql              # Idempotent schema for eight tables
+├── packaging/
+│   ├── AppRun                              # AppImage entry point
+│   ├── bloodbank.desktop                   # Linux desktop integration
+│   ├── bloodbank.png                       # Application icon
+│   └── launcher.sh                         # Starts the bundled Java runtime
 ├── .gitignore
 ├── mvnw                                    # Linux/macOS Maven wrapper
 ├── mvnw.cmd                                # Windows Maven wrapper
@@ -251,6 +259,33 @@ java -jar target\blood-bank-management-system-1.0-SNAPSHOT.jar --test-reservatio
 Open the project folder in VS Code and use **Terminal → Run Task…**.
 
 **Ctrl+Shift+B** runs the default task, **BBMS: Build and run application**. The tasks are cross-platform: Linux/macOS use `./mvnw`, while Windows uses `mvnw.cmd` through `cmd.exe`. A fresh clone therefore builds and starts the GUI with one shortcut, provided JDK 21 is installed and the first Maven wrapper download can reach the internet.
+
+## Release binaries
+
+Pushing a version tag automatically builds two binaries and publishes them as a GitHub Release:
+
+| Platform | Artifact |
+|---|---|
+| Linux | `BloodBankManagementSystem-<version>.AppImage` |
+| Windows | `BloodBankManagementSystem-<version>.exe` |
+
+Both artifacts bundle a Java 21 runtime, so end users do not need to install Java separately.
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+The workflow is `.github/workflows/release.yml`. It builds the shaded JAR, uses `jpackage` for the Windows installer, wraps the Linux application image with `linuxdeploy`, then attaches both files to the release. You can also run the workflow manually from the Actions tab to verify the build without publishing a release.
+
+Linux users can run the AppImage directly:
+
+```bash
+chmod +x BloodBankManagementSystem-1.0.0.AppImage
+./BloodBankManagementSystem-1.0.0.AppImage
+```
+
+Windows users run the `.exe` installer; it creates a Start Menu entry and allows choosing the install directory.
 
 ## Database and backups
 

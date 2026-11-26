@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Blood Bank Management System
+GenericName=Blood Bank Management
+Comment=Manage donors, donations, inventory, patients, requests and issuing
+Exec=BloodBankManagementSystem
+Icon=bloodbank
+Categories=Office;
+Terminal=false
+StartupNotify=true

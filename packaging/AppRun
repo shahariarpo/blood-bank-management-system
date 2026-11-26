@@ -1,0 +1,5 @@
+#!/bin/sh
+# AppImage entry point. The AppImage runtime sets APPDIR to the mounted directory.
+set -e
+APPDIR="${APPDIR:-$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)}"
+exec "$APPDIR/usr/bin/BloodBankManagementSystem" "$@"

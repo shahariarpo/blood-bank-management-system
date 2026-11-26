@@ -19,3 +19,7 @@ Thumbs.db
 # Local development notes (not part of the distributed project)
 agent.md
 MILESTONE-*-HANDOFF.md
+
+# Release packaging scratch space
+build/
+linuxdeploy-x86_64.AppImage
