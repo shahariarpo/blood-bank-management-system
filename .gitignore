@@ -1,0 +1,17 @@
+# Maven build output
+target/
+
+# VS Code Java language server output
+out/
+
+# Local SQLite database (generated from schema.sql)
+data/*.db
+data/*.db-journal
+
+# IDE files
+.idea/
+*.iml
+
+# OS files
+.DS_Store
+Thumbs.db

@@ -1,0 +1,50 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "BBMS: Build and run application",
+      "type": "shell",
+      "command": "./mvnw -q clean package && java -jar target/blood-bank-management-system-1.0-SNAPSHOT.jar",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "BBMS: Authentication console test",
+      "type": "shell",
+      "command": "./mvnw -q clean package && java -jar target/blood-bank-management-system-1.0-SNAPSHOT.jar --test-auth",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "BBMS: Run existing JAR (no rebuild)",
+      "type": "shell",
+      "command": "java -jar target/blood-bank-management-system-1.0-SNAPSHOT.jar",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    }
+  ]
+}
