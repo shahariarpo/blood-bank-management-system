@@ -35,7 +35,8 @@ import java.util.concurrent.ExecutionException;
 public class InventoryPanel extends JPanel {
 
     private static final String[] UNIT_COLUMNS = {
-            "ID", "Donation", "Group", "Component", "Collected", "Expires", "Status", "Donor"
+            "ID", "Donation", "Group", "Component", "Collected", "Expires", "Status",
+            "Reserved for", "Donor"
     };
     private static final String[] SUMMARY_COLUMNS = {"Blood group", "Available units"};
     private static final int EXPIRY_WINDOW_DAYS = 7;
@@ -56,6 +57,7 @@ public class InventoryPanel extends JPanel {
     private final JLabel expiringLabel = UIComponents.createSubtitle("Loading expiry monitor...");
 
     private List<BloodUnit> displayedUnits = new ArrayList<>();
+    private Map<Integer, Integer> displayedReservations = Map.of();
     private boolean busy;
 
     public InventoryPanel() {
@@ -86,7 +88,8 @@ public class InventoryPanel extends JPanel {
         table.getColumnModel().getColumn(4).setPreferredWidth(100);
         table.getColumnModel().getColumn(5).setPreferredWidth(100);
         table.getColumnModel().getColumn(6).setPreferredWidth(110);
-        table.getColumnModel().getColumn(7).setPreferredWidth(150);
+        table.getColumnModel().getColumn(7).setPreferredWidth(100);
+        table.getColumnModel().getColumn(8).setPreferredWidth(150);
         table.getSelectionModel().addListSelectionListener(event -> {
             if (!event.getValueIsAdjusting()) {
                 updateActionButtons();
@@ -153,7 +156,7 @@ public class InventoryPanel extends JPanel {
         actions.add(releaseButton);
         actions.add(Box.createHorizontalStrut(8));
         actions.add(UIComponents.createSubtitle(
-                "Units come from accepted donations. ISSUED/EXPIRED cannot be changed here."));
+                "RESERVED units are held by approvals. ISSUED/EXPIRED cannot be changed here."));
         return actions;
     }
 
@@ -171,7 +174,7 @@ public class InventoryPanel extends JPanel {
                 "Expired units are flagged automatically on load.");
         note.setAlignmentX(JComponent.LEFT_ALIGNMENT);
         JLabel fefo = UIComponents.createSubtitle(
-                "Issuing uses FEFO from unexpired AVAILABLE units.");
+                "Approval reserves FEFO units; issuing consumes those holds first.");
         fefo.setAlignmentX(JComponent.LEFT_ALIGNMENT);
 
         panel.add(title);
@@ -199,7 +202,8 @@ public class InventoryPanel extends JPanel {
                 return new InventorySnapshot(
                         InventoryService.search(keyword, group, status),
                         InventoryService.getAvailableCountsByGroup(),
-                        InventoryService.findExpiringSoon(EXPIRY_WINDOW_DAYS));
+                        InventoryService.findExpiringSoon(EXPIRY_WINDOW_DAYS),
+                        InventoryService.getReservedRequestIds());
             }
 
             @Override
@@ -231,8 +235,10 @@ public class InventoryPanel extends JPanel {
 
     private void populate(InventorySnapshot snapshot) {
         displayedUnits = snapshot.units;
+        displayedReservations = snapshot.reservations;
         tableModel.setRowCount(0);
         for (BloodUnit unit : snapshot.units) {
+            Integer requestId = snapshot.reservations.get(unit.getUnitId());
             tableModel.addRow(new Object[]{
                     unit.getUnitId(),
                     unit.getDonationId(),
@@ -240,7 +246,8 @@ public class InventoryPanel extends JPanel {
                     componentLabel(unit.getComponentType()),
                     unit.getCollectionDate(),
                     unit.getExpiryDate(),
-                    unit.getStatus(),
+                    requestId == null ? unit.getStatus() : "RESERVED",
+                    requestId == null ? "-" : "#" + requestId,
                     unit.getDonorName() == null ? "-" : unit.getDonorName()
             });
         }
@@ -276,7 +283,8 @@ public class InventoryPanel extends JPanel {
 
     private void updateActionButtons() {
         BloodUnit unit = selectedUnit();
-        boolean usable = !busy && unit != null && !InventoryService.isExpired(unit);
+        boolean reserved = unit != null && displayedReservations.containsKey(unit.getUnitId());
+        boolean usable = !busy && unit != null && !reserved && !InventoryService.isExpired(unit);
         quarantineButton.setEnabled(usable && "AVAILABLE".equals(unit.getStatus()));
         releaseButton.setEnabled(usable && "QUARANTINED".equals(unit.getStatus()));
     }
@@ -324,12 +332,14 @@ public class InventoryPanel extends JPanel {
         private final List<BloodUnit> units;
         private final Map<String, Integer> counts;
         private final List<BloodUnit> expiring;
+        private final Map<Integer, Integer> reservations;
 
         private InventorySnapshot(List<BloodUnit> units, Map<String, Integer> counts,
-                                  List<BloodUnit> expiring) {
+                                  List<BloodUnit> expiring, Map<Integer, Integer> reservations) {
             this.units = units;
             this.counts = counts;
             this.expiring = expiring;
+            this.reservations = reservations;
         }
     }
 }

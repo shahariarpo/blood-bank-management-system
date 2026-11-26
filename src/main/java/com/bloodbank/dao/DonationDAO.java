@@ -31,6 +31,13 @@ public final class DonationDAO {
                 + " ORDER BY d.donation_date DESC, d.donation_id DESC", statement -> { });
     }
 
+    /** Smallest useful history for the dashboard; never more than {@code limit} rows. */
+    public static List<Donation> findRecent(int limit) throws SQLException {
+        String sql = SELECT_JOINED
+                + " ORDER BY d.donation_date DESC, d.donation_id DESC LIMIT ?";
+        return query(sql, statement -> statement.setInt(1, Math.max(1, limit)));
+    }
+
     public static List<Donation> findByDonorId(int donorId) throws SQLException {
         return query(SELECT_JOINED + " WHERE d.donor_id = ?"
                         + " ORDER BY d.donation_date DESC, d.donation_id DESC",

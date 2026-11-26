@@ -74,6 +74,17 @@ CREATE TABLE IF NOT EXISTS blood_issues (
     FOREIGN KEY (unit_id) REFERENCES blood_units(unit_id)
 );
 
+-- Approval reserves units without changing their stored status.
+-- A unit can be reserved for only one request at a time.
+CREATE TABLE IF NOT EXISTS blood_reservations (
+    reservation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    request_id     INTEGER NOT NULL,
+    unit_id        INTEGER NOT NULL UNIQUE,
+    reserved_on    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (request_id) REFERENCES blood_requests(request_id),
+    FOREIGN KEY (unit_id) REFERENCES blood_units(unit_id)
+);
+
 -- Indexes for the filters and lookups the application will use later.
 CREATE INDEX IF NOT EXISTS idx_donors_blood_group ON donors(blood_group);
 CREATE INDEX IF NOT EXISTS idx_donations_donor_id ON donations(donor_id);
@@ -84,3 +95,5 @@ CREATE INDEX IF NOT EXISTS idx_blood_units_expiry ON blood_units(expiry_date);
 CREATE INDEX IF NOT EXISTS idx_requests_patient_id ON blood_requests(patient_id);
 CREATE INDEX IF NOT EXISTS idx_requests_status ON blood_requests(status);
 CREATE INDEX IF NOT EXISTS idx_issues_request_id ON blood_issues(request_id);
+CREATE INDEX IF NOT EXISTS idx_reservations_request_id ON blood_reservations(request_id);
+CREATE INDEX IF NOT EXISTS idx_reservations_unit_id ON blood_reservations(unit_id);

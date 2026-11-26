@@ -106,26 +106,43 @@ public final class UIComponents {
         return button;
     }
 
-    /** Dashboard metric card with a label and a large value. */
-    public static JPanel createStatCard(String label, String value, Color valueColor) {
-        JPanel card = createPanel(Color.WHITE);
-        card.setLayout(new BoxLayout(card, BoxLayout.Y_AXIS));
-        card.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(BORDER),
-                BorderFactory.createEmptyBorder(16, 18, 16, 18)));
+    /** Dashboard metric card with a label and a large, updatable value. */
+    public static StatCard createStatCard(String label, String value, Color valueColor) {
+        return new StatCard(label, value, valueColor);
+    }
 
-        JLabel labelField = createSubtitle(label);
-        labelField.setAlignmentX(JComponent.LEFT_ALIGNMENT);
+    /** A stat card whose value can be replaced after a background load. */
+    public static final class StatCard extends JPanel {
+        private final JLabel valueField;
+        private final Color valueColor;
 
-        JLabel valueField = new JLabel(value, SwingConstants.LEFT);
-        valueField.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 26));
-        valueField.setForeground(valueColor);
-        valueField.setAlignmentX(JComponent.LEFT_ALIGNMENT);
+        private StatCard(String label, String value, Color valueColor) {
+            super(new BorderLayout());
+            this.valueColor = valueColor;
+            setBackground(Color.WHITE);
+            setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createLineBorder(BORDER),
+                    BorderFactory.createEmptyBorder(16, 18, 16, 18)));
 
-        card.add(labelField);
-        card.add(Box.createVerticalStrut(8));
-        card.add(valueField);
-        return card;
+            JLabel labelField = createSubtitle(label);
+            valueField = new JLabel(value, SwingConstants.LEFT);
+            valueField.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 26));
+            valueField.setForeground(valueColor);
+
+            JPanel stack = createPanel(Color.WHITE);
+            stack.setLayout(new BoxLayout(stack, BoxLayout.Y_AXIS));
+            labelField.setAlignmentX(JComponent.LEFT_ALIGNMENT);
+            valueField.setAlignmentX(JComponent.LEFT_ALIGNMENT);
+            stack.add(labelField);
+            stack.add(Box.createVerticalStrut(8));
+            stack.add(valueField);
+            add(stack, BorderLayout.CENTER);
+        }
+
+        public void setValue(String value) {
+            valueField.setText(value);
+            valueField.setForeground(valueColor);
+        }
     }
 
     /** White panel with a heading and any content component inside it. */

@@ -8,6 +8,16 @@
       "options": {
         "cwd": "${workspaceFolder}"
       },
+      "windows": {
+        "command": "mvnw.cmd -q clean package && java -jar target\\blood-bank-management-system-1.0-SNAPSHOT.jar",
+        "options": {
+          "cwd": "${workspaceFolder}",
+          "shell": {
+            "executable": "cmd.exe",
+            "args": ["/d", "/c"]
+          }
+        }
+      },
       "group": {
         "kind": "build",
         "isDefault": true
@@ -26,6 +36,16 @@
       "options": {
         "cwd": "${workspaceFolder}"
       },
+      "windows": {
+        "command": "mvnw.cmd -q clean package && java -jar target\\blood-bank-management-system-1.0-SNAPSHOT.jar --test-auth",
+        "options": {
+          "cwd": "${workspaceFolder}",
+          "shell": {
+            "executable": "cmd.exe",
+            "args": ["/d", "/c"]
+          }
+        }
+      },
       "problemMatcher": [],
       "presentation": {
         "reveal": "always",
@@ -39,6 +59,16 @@
       "command": "./mvnw -q clean package && java -jar target/blood-bank-management-system-1.0-SNAPSHOT.jar --test-donors",
       "options": {
         "cwd": "${workspaceFolder}"
+      },
+      "windows": {
+        "command": "mvnw.cmd -q clean package && java -jar target\\blood-bank-management-system-1.0-SNAPSHOT.jar --test-donors",
+        "options": {
+          "cwd": "${workspaceFolder}",
+          "shell": {
+            "executable": "cmd.exe",
+            "args": ["/d", "/c"]
+          }
+        }
       },
       "problemMatcher": [],
       "presentation": {
@@ -54,6 +84,16 @@
       "options": {
         "cwd": "${workspaceFolder}"
       },
+      "windows": {
+        "command": "mvnw.cmd -q clean package && java -jar target\\blood-bank-management-system-1.0-SNAPSHOT.jar --test-donations",
+        "options": {
+          "cwd": "${workspaceFolder}",
+          "shell": {
+            "executable": "cmd.exe",
+            "args": ["/d", "/c"]
+          }
+        }
+      },
       "problemMatcher": [],
       "presentation": {
         "reveal": "always",
@@ -67,6 +107,16 @@
       "command": "./mvnw -q clean package && java -jar target/blood-bank-management-system-1.0-SNAPSHOT.jar --test-inventory",
       "options": {
         "cwd": "${workspaceFolder}"
+      },
+      "windows": {
+        "command": "mvnw.cmd -q clean package && java -jar target\\blood-bank-management-system-1.0-SNAPSHOT.jar --test-inventory",
+        "options": {
+          "cwd": "${workspaceFolder}",
+          "shell": {
+            "executable": "cmd.exe",
+            "args": ["/d", "/c"]
+          }
+        }
       },
       "problemMatcher": [],
       "presentation": {
@@ -82,6 +132,64 @@
       "options": {
         "cwd": "${workspaceFolder}"
       },
+      "windows": {
+        "command": "mvnw.cmd -q clean package && java -jar target\\blood-bank-management-system-1.0-SNAPSHOT.jar --test-requests",
+        "options": {
+          "cwd": "${workspaceFolder}",
+          "shell": {
+            "executable": "cmd.exe",
+            "args": ["/d", "/c"]
+          }
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "BBMS: Report and backup console test",
+      "type": "shell",
+      "command": "./mvnw -q clean package && java -jar target/blood-bank-management-system-1.0-SNAPSHOT.jar --test-reports",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "windows": {
+        "command": "mvnw.cmd -q clean package && java -jar target\\blood-bank-management-system-1.0-SNAPSHOT.jar --test-reports",
+        "options": {
+          "cwd": "${workspaceFolder}",
+          "shell": {
+            "executable": "cmd.exe",
+            "args": ["/d", "/c"]
+          }
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "BBMS: Reservation console test",
+      "type": "shell",
+      "command": "./mvnw -q clean package && java -jar target/blood-bank-management-system-1.0-SNAPSHOT.jar --test-reservations",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "windows": {
+        "command": "mvnw.cmd -q clean package && java -jar target\\blood-bank-management-system-1.0-SNAPSHOT.jar --test-reservations",
+        "options": {
+          "cwd": "${workspaceFolder}",
+          "shell": {
+            "executable": "cmd.exe",
+            "args": ["/d", "/c"]
+          }
+        }
+      },
       "problemMatcher": [],
       "presentation": {
         "reveal": "always",
@@ -95,6 +203,16 @@
       "command": "java -jar target/blood-bank-management-system-1.0-SNAPSHOT.jar",
       "options": {
         "cwd": "${workspaceFolder}"
+      },
+      "windows": {
+        "command": "java -jar target\\blood-bank-management-system-1.0-SNAPSHOT.jar",
+        "options": {
+          "cwd": "${workspaceFolder}",
+          "shell": {
+            "executable": "cmd.exe",
+            "args": ["/d", "/c"]
+          }
+        }
       },
       "problemMatcher": [],
       "presentation": {

@@ -12,12 +12,15 @@ import com.bloodbank.model.Donation;
 import com.bloodbank.model.Donor;
 import com.bloodbank.model.Patient;
 import com.bloodbank.service.AuthService;
+import com.bloodbank.service.BackupService;
 import com.bloodbank.service.DonationService;
 import com.bloodbank.service.DonorService;
 import com.bloodbank.service.InventoryService;
 import com.bloodbank.service.IssueService;
 import com.bloodbank.service.PatientService;
+import com.bloodbank.service.ReportService;
 import com.bloodbank.service.RequestService;
+import com.bloodbank.service.ReservationService;
 import com.bloodbank.ui.LoginFrame;
 import com.bloodbank.util.BloodCompatibility;
 import com.bloodbank.util.Validators;
@@ -25,6 +28,9 @@ import com.bloodbank.util.Validators;
 import javax.swing.JOptionPane;
 import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -38,7 +44,7 @@ import java.util.Optional;
 /**
  * Application entry point.
  * Console smoke tests: --test-auth, --test-donors, --test-donations,
- * --test-inventory, --test-requests.
+ * --test-inventory, --test-requests, --test-reports, --test-reservations.
  */
 public class Main {
 
@@ -47,6 +53,8 @@ public class Main {
     private static final String DONATION_TEST_ARG = "--test-donations";
     private static final String INVENTORY_TEST_ARG = "--test-inventory";
     private static final String REQUEST_TEST_ARG = "--test-requests";
+    private static final String REPORT_TEST_ARG = "--test-reports";
+    private static final String RESERVATION_TEST_ARG = "--test-reservations";
 
     public static void main(String[] args) {
         try {
@@ -79,6 +87,14 @@ public class Main {
                 runRequestTest();
                 return;
             }
+            if (args.length > 0 && REPORT_TEST_ARG.equals(args[0])) {
+                runReportTest();
+                return;
+            }
+            if (args.length > 0 && RESERVATION_TEST_ARG.equals(args[0])) {
+                runReservationTest();
+                return;
+            }
 
             UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
             SwingUtilities.invokeLater(() -> {
@@ -99,7 +115,9 @@ public class Main {
                     && (TEST_ARG.equals(args[0]) || DONOR_TEST_ARG.equals(args[0])
                     || DONATION_TEST_ARG.equals(args[0])
                     || INVENTORY_TEST_ARG.equals(args[0])
-                    || REQUEST_TEST_ARG.equals(args[0]));
+                    || REQUEST_TEST_ARG.equals(args[0])
+                    || REPORT_TEST_ARG.equals(args[0])
+                    || RESERVATION_TEST_ARG.equals(args[0]));
             if (!consoleTest) {
                 JOptionPane.showMessageDialog(null,
                         "Startup failed: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
@@ -342,6 +360,15 @@ public class Main {
     private static void deleteDonationTestRows(int donorId) throws SQLException {
         try (Connection connection = DatabaseConnection.getConnection();
              PreparedStatement statement = connection.prepareStatement(
+                     "DELETE FROM blood_reservations WHERE unit_id IN "
+                             + "(SELECT bu.unit_id FROM blood_units bu "
+                             + "JOIN donations d ON bu.donation_id = d.donation_id "
+                             + "WHERE d.donor_id = ?)")) {
+            statement.setInt(1, donorId);
+            statement.executeUpdate();
+        }
+        try (Connection connection = DatabaseConnection.getConnection();
+             PreparedStatement statement = connection.prepareStatement(
                      "DELETE FROM blood_units WHERE donation_id IN "
                              + "(SELECT donation_id FROM donations WHERE donor_id = ?)")) {
             statement.setInt(1, donorId);
@@ -547,6 +574,7 @@ public class Main {
             BloodRequest full = RequestService.add(new BloodRequest(
                     patient.getPatientId(), patientGroup, 1, LocalDate.now(), "URGENT"));
             RequestService.approve(full.getRequestId());
+            int fulfilledBeforeIssue = ReportService.getDashboardData().getFulfilledRequests();
             IssueService.IssueResult fullResult = IssueService.issue(full.getRequestId(), 1, false);
             String fullStatus = RequestService.getById(full.getRequestId())
                     .orElseThrow().getStatus();
@@ -560,7 +588,13 @@ public class Main {
             if (!"RED_CELLS".equals(firstIssue.getComponentType())) {
                 throw new SQLException("FEFO did not select the earliest-expiring unit.");
             }
+            int fulfilledAfterIssue = ReportService.getDashboardData().getFulfilledRequests();
+            if (fulfilledAfterIssue != fulfilledBeforeIssue + 1) {
+                throw new SQLException("Dashboard fulfilled count did not reflect the issue.");
+            }
             System.out.println("  FULL ISSUE ok - FEFO selected RED_CELLS");
+            System.out.println("  DASHBOARD fulfilled count ok - " + fulfilledBeforeIssue
+                    + " -> " + fulfilledAfterIssue);
 
             int issuesAfterFull = countIssuesForRequest(full.getRequestId());
             try {
@@ -631,6 +665,13 @@ public class Main {
     private static void deleteRequestTestRows(int patientId) throws SQLException {
         try (Connection connection = DatabaseConnection.getConnection();
              PreparedStatement statement = connection.prepareStatement(
+                     "DELETE FROM blood_reservations WHERE request_id IN "
+                             + "(SELECT request_id FROM blood_requests WHERE patient_id = ?)")) {
+            statement.setInt(1, patientId);
+            statement.executeUpdate();
+        }
+        try (Connection connection = DatabaseConnection.getConnection();
+             PreparedStatement statement = connection.prepareStatement(
                      "DELETE FROM blood_issues WHERE request_id IN "
                              + "(SELECT request_id FROM blood_requests WHERE patient_id = ?)")) {
             statement.setInt(1, patientId);
@@ -666,5 +707,304 @@ public class Main {
             deleteRequestTestRows(patientId);
         }
         cleanupDonationTestData("M7 Test Donor");
+    }
+
+    private static void runReportTest() throws SQLException, IOException {
+        System.out.println();
+        System.out.println("Report and backup smoke test:");
+        cleanupReportTestData();
+
+        Map<String, Integer> counts = InventoryService.getAvailableCountsByGroup();
+        String testGroup = null;
+        for (String group : Validators.BLOOD_GROUPS) {
+            if (counts.getOrDefault(group, 0) == 0) {
+                testGroup = group;
+                break;
+            }
+        }
+        if (testGroup == null) {
+            throw new SQLException("Every blood group has available stock. "
+                    + "The report test needs at least one empty group.");
+        }
+
+        ReportService.DashboardData before = ReportService.getDashboardData();
+        int donorsBefore = before.getTotalDonors();
+        int availableBefore = before.getAvailableUnits();
+        int fulfilledBefore = before.getFulfilledRequests();
+
+        Donor donor = DonorService.add(new Donor("M8 Test Donor", 30, "Female", testGroup,
+                "5555556666", "Test address"));
+        int donorId = donor.getDonorId();
+        int patientId = 0;
+        Path backup = null;
+
+        try {
+            Donation donation = DonationService.add(new Donation(donorId,
+                    LocalDate.now().minusDays(1), 350, "ACCEPTED", "report test"),
+                    BloodComponent.RED_CELLS);
+            ReportService.DashboardData afterDonation = ReportService.getDashboardData();
+            if (afterDonation.getTotalDonors() != donorsBefore + 1
+                    || afterDonation.getAvailableUnits() != availableBefore + 1
+                    || afterDonation.getInventoryByGroup().get(testGroup) != 1) {
+                throw new SQLException("Dashboard did not reflect the new donor and unit.");
+            }
+            System.out.println("  DASHBOARD donor/stock ok - group = " + testGroup);
+
+            Patient patient = PatientService.add(new Patient("M8 Test Patient", 35, "Male",
+                    testGroup, "5556667777", "Test Hospital"));
+            patientId = patient.getPatientId();
+            BloodRequest request = RequestService.add(new BloodRequest(patientId, testGroup,
+                    1, LocalDate.now(), "NORMAL"));
+            RequestService.approve(request.getRequestId());
+            IssueService.issue(request.getRequestId(), 1, false);
+
+            ReportService.DashboardData afterIssue = ReportService.getDashboardData();
+            if (afterIssue.getFulfilledRequests() != fulfilledBefore + 1) {
+                throw new SQLException("Fulfilled request count was not updated.");
+            }
+            boolean recentDonation = afterIssue.getRecentDonations().stream()
+                    .anyMatch(item -> item.getDonationId() == donation.getDonationId());
+            boolean recentRequest = afterIssue.getRecentRequests().stream()
+                    .anyMatch(item -> item.getRequestId() == request.getRequestId());
+            if (!recentDonation || !recentRequest
+                    || afterIssue.getRecentDonations().size() > 5
+                    || afterIssue.getRecentRequests().size() > 5) {
+                throw new SQLException("Recent activity is missing or exceeds the 5-row limit.");
+            }
+            System.out.println("  DASHBOARD requests/recent ok");
+
+            ReportService.ReportData report = ReportService.getReportData();
+            int stockTotal = 0;
+            for (Integer value : report.getInventoryByGroup().values()) {
+                stockTotal += value;
+            }
+            if (report.getTotalDonors() != afterIssue.getTotalDonors()
+                    || report.getIssuedUnits() < 1
+                    || stockTotal != afterIssue.getAvailableUnits()
+                    || report.getDonationHistory().size() < 1
+                    || report.getIssuingHistory().size() < 1) {
+                throw new SQLException("Report figures are inconsistent with dashboard figures.");
+            }
+            System.out.println("  REPORT totals/history ok");
+
+            backup = BackupService.createTimestampedBackup(null);
+            int tables = BackupService.verifyBackup(backup);
+            int donorsInBackup = BackupService.countInBackup(backup, "donors");
+            if (tables != 8 || donorsInBackup != afterIssue.getTotalDonors()) {
+                throw new SQLException("Backup verification failed.");
+            }
+            System.out.println("  BACKUP ok - " + backup.getFileName() + ", tables = " + tables);
+
+            System.out.println("Report and backup test completed successfully.");
+        } finally {
+            if (backup != null) {
+                Files.deleteIfExists(backup);
+            }
+            if (patientId > 0) {
+                deleteRequestTestRows(patientId);
+            }
+            deleteDonationTestRows(donorId);
+        }
+    }
+
+    private static void cleanupReportTestData() throws SQLException {
+        List<Integer> donorIds = new ArrayList<>();
+        String donorSelect = "SELECT donor_id FROM donors WHERE name = ?";
+        try (Connection connection = DatabaseConnection.getConnection();
+             PreparedStatement statement = connection.prepareStatement(donorSelect)) {
+            statement.setString(1, "M8 Test Donor");
+            try (ResultSet resultSet = statement.executeQuery()) {
+                while (resultSet.next()) {
+                    donorIds.add(resultSet.getInt("donor_id"));
+                }
+            }
+        }
+        for (int donorId : donorIds) {
+            deleteDonationTestRows(donorId);
+        }
+
+        List<Integer> patientIds = new ArrayList<>();
+        String patientSelect = "SELECT patient_id FROM patients WHERE name = ?";
+        try (Connection connection = DatabaseConnection.getConnection();
+             PreparedStatement statement = connection.prepareStatement(patientSelect)) {
+            statement.setString(1, "M8 Test Patient");
+            try (ResultSet resultSet = statement.executeQuery()) {
+                while (resultSet.next()) {
+                    patientIds.add(resultSet.getInt("patient_id"));
+                }
+            }
+        }
+        for (int patientId : patientIds) {
+            deleteRequestTestRows(patientId);
+        }
+    }
+
+    private static void runReservationTest() throws SQLException {
+        System.out.println();
+        System.out.println("Reservation smoke test:");
+        cleanupReservationTestData();
+        int reservationsBefore = ReservationService.count();
+
+        String testGroup = null;
+        Map<String, Integer> counts = InventoryService.getAvailableCountsByGroup();
+        for (String candidate : Validators.BLOOD_GROUPS) {
+            boolean empty = true;
+            for (String donorGroup : BloodCompatibility.compatibleDonorGroups(candidate)) {
+                if (counts.getOrDefault(donorGroup, 0) > 0) {
+                    empty = false;
+                    break;
+                }
+            }
+            if (empty) {
+                testGroup = candidate;
+                break;
+            }
+        }
+        if (testGroup == null) {
+            throw new SQLException("Every patient group has compatible available units. "
+                    + "The reservation test needs at least one empty compatibility set.");
+        }
+
+        Donor donor = DonorService.add(new Donor("M9 Test Donor", 30, "Female", testGroup,
+                "5557778888", "Test address"));
+        int donorId = donor.getDonorId();
+        int patientId = 0;
+
+        try {
+            DonationService.add(new Donation(donorId, LocalDate.now().minusDays(1), 350,
+                    "ACCEPTED", "reservation test"), BloodComponent.RED_CELLS);
+            Patient patient = PatientService.add(new Patient("M9 Test Patient", 35, "Male",
+                    testGroup, "5558889999", "Test Hospital"));
+            patientId = patient.getPatientId();
+
+            int before = availableForGroup(testGroup);
+            BloodRequest first = RequestService.add(new BloodRequest(
+                    patientId, testGroup, 1, LocalDate.now(), "URGENT"));
+            RequestService.ApprovalResult firstApproval = RequestService.approve(first.getRequestId());
+            int reservedUnitId = ReservationService.getUnitIdsForRequest(first.getRequestId())
+                    .get(0);
+            if (firstApproval.getReservedUnits() != 1
+                    || ReservationService.count() != reservationsBefore + 1
+                    || availableForGroup(testGroup) != before - 1
+                    || ReservationService.getRequestIdsByUnit().get(reservedUnitId)
+                    != first.getRequestId()) {
+                throw new SQLException("Approval did not reserve and hide a compatible unit.");
+            }
+            System.out.println("  RESERVE ok - available " + before + " -> "
+                    + availableForGroup(testGroup) + ", group = " + testGroup);
+
+            BloodRequest second = RequestService.add(new BloodRequest(
+                    patientId, testGroup, 1, LocalDate.now(), "NORMAL"));
+            RequestService.ApprovalResult secondApproval =
+                    RequestService.approve(second.getRequestId());
+            if (secondApproval.getReservedUnits() != 0 || !secondApproval.isPartial()
+                    || !ReservationService.getUnitIdsForRequest(second.getRequestId()).isEmpty()) {
+                throw new SQLException("A reserved unit was offered to a second request.");
+            }
+            System.out.println("  DOUBLE RESERVE blocked - partial approval warning returned");
+
+            IssueService.issue(first.getRequestId(), 1, false);
+            if (ReservationService.count() != reservationsBefore
+                    || !"ISSUED".equals(unitStatus(reservedUnitId))
+                    || availableForGroup(testGroup) != before - 1) {
+                throw new SQLException("Issuing did not consume the reservation.");
+            }
+            System.out.println("  ISSUE ok - reservation consumed, unit marked ISSUED");
+
+            DonationService.add(new Donation(donorId, LocalDate.now().minusDays(1), 350,
+                    "ACCEPTED", "release test"), BloodComponent.PLASMA);
+            BloodRequest rejected = RequestService.add(new BloodRequest(
+                    patientId, testGroup, 1, LocalDate.now(), "NORMAL"));
+            RequestService.approve(rejected.getRequestId());
+            int beforeReject = availableForGroup(testGroup);
+            RequestService.reject(rejected.getRequestId());
+            if (ReservationService.count() != reservationsBefore
+                    || availableForGroup(testGroup) != beforeReject + 1) {
+                throw new SQLException("Rejecting did not release the reservation.");
+            }
+            System.out.println("  REJECT ok - reservation released to AVAILABLE");
+
+            DonationService.add(new Donation(donorId, LocalDate.now().minusDays(1), 350,
+                    "ACCEPTED", "expiry test"), BloodComponent.RED_CELLS);
+            BloodRequest expired = RequestService.add(new BloodRequest(
+                    patientId, testGroup, 1, LocalDate.now(), "NORMAL"));
+            RequestService.approve(expired.getRequestId());
+            int expiringUnitId = ReservationService.getUnitIdsForRequest(
+                    expired.getRequestId()).get(0);
+            try (Connection connection = DatabaseConnection.getConnection();
+                 PreparedStatement statement = connection.prepareStatement(
+                         "UPDATE blood_units SET expiry_date = ? WHERE unit_id = ?")) {
+                statement.setString(1, LocalDate.now().toString());
+                statement.setInt(2, expiringUnitId);
+                statement.executeUpdate();
+            }
+            InventoryService.refreshStatuses();
+            if (ReservationService.count() != reservationsBefore
+                    || !"EXPIRED".equals(unitStatus(expiringUnitId))) {
+                throw new SQLException("Expiry did not release the reservation.");
+            }
+            System.out.println("  EXPIRY ok - expired reservation released");
+
+            DonationService.add(new Donation(donorId, LocalDate.now().minusDays(1), 350,
+                    "ACCEPTED", "cancel test"), BloodComponent.PLASMA);
+            BloodRequest cancelled = RequestService.add(new BloodRequest(
+                    patientId, testGroup, 1, LocalDate.now(), "NORMAL"));
+            RequestService.approve(cancelled.getRequestId());
+            RequestService.cancel(cancelled.getRequestId());
+            if (ReservationService.count() != reservationsBefore
+                    || !"CANCELLED".equals(RequestService.getById(cancelled.getRequestId())
+                    .orElseThrow().getStatus())) {
+                throw new SQLException("Cancelling did not release the reservation.");
+            }
+            System.out.println("  CANCEL ok - reservation released, request CANCELLED");
+
+            System.out.println("Reservation test completed successfully.");
+        } finally {
+            deleteRequestTestRows(patientId);
+            deleteDonationTestRows(donorId);
+        }
+    }
+
+    private static int availableForGroup(String bloodGroup) throws SQLException {
+        return InventoryService.getAvailableCountsByGroup().getOrDefault(bloodGroup, 0);
+    }
+
+    private static String unitStatus(int unitId) throws SQLException {
+        String sql = "SELECT status FROM blood_units WHERE unit_id = ?";
+        try (Connection connection = DatabaseConnection.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setInt(1, unitId);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                if (!resultSet.next()) {
+                    throw new SQLException("Unit " + unitId + " was not found.");
+                }
+                return resultSet.getString("status");
+            }
+        }
+    }
+
+    private static void cleanupReservationTestData() throws SQLException {
+        for (int donorId : findIds("donors", "donor_id", "M9 Test Donor")) {
+            deleteDonationTestRows(donorId);
+        }
+        for (int patientId : findIds("patients", "patient_id", "M9 Test Patient")) {
+            deleteRequestTestRows(patientId);
+        }
+    }
+
+    private static List<Integer> findIds(String table, String idColumn, String name)
+            throws SQLException {
+        String sql = "SELECT " + idColumn + " FROM " + table + " WHERE name = ?";
+        List<Integer> ids = new ArrayList<>();
+        try (Connection connection = DatabaseConnection.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, name);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                while (resultSet.next()) {
+                    ids.add(resultSet.getInt(idColumn));
+                }
+            }
+        }
+        return ids;
     }
 }

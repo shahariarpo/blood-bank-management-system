@@ -33,6 +33,16 @@ public final class PatientDAO {
         return patients.isEmpty() ? Optional.empty() : Optional.of(patients.get(0));
     }
 
+    public static int count() throws SQLException {
+        String sql = "SELECT COUNT(*) FROM patients";
+        try (Connection connection = DatabaseConnection.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql);
+             ResultSet resultSet = statement.executeQuery()) {
+            resultSet.next();
+            return resultSet.getInt(1);
+        }
+    }
+
     public static List<Patient> search(String keyword) throws SQLException {
         String sql = "SELECT " + COLUMNS + " FROM patients "
                 + "WHERE name LIKE ? OR CAST(patient_id AS TEXT) LIKE ? "

@@ -77,7 +77,15 @@ public final class BloodUnitDAO {
     }
 
     public static Optional<BloodUnit> findById(int unitId) throws SQLException {
-        List<BloodUnit> units = query(SELECT_JOINED + " WHERE bu.unit_id = ?",
+        try (Connection connection = DatabaseConnection.getConnection()) {
+            return findById(connection, unitId);
+        }
+    }
+
+    /** Caller-supplied connection keeps reads inside the caller's transaction. */
+    public static Optional<BloodUnit> findById(Connection connection, int unitId)
+            throws SQLException {
+        List<BloodUnit> units = query(connection, SELECT_JOINED + " WHERE bu.unit_id = ?",
                 statement -> statement.setInt(1, unitId));
         return units.isEmpty() ? Optional.empty() : Optional.of(units.get(0));
     }
@@ -114,21 +122,42 @@ public final class BloodUnitDAO {
         return query(sql.toString(), statement -> bind(statement, parameters));
     }
 
-    /** FEFO: eligible units ordered by expiry date, then unit ID as a tie-breaker. */
+    /** FEFO: eligible, unreserved units ordered by expiry date, then unit ID. */
     public static List<BloodUnit> findAvailableForIssue(String bloodGroup, int limit,
                                                         LocalDate today) throws SQLException {
+        try (Connection connection = DatabaseConnection.getConnection()) {
+            return findAvailableForIssue(connection, bloodGroup, limit, today);
+        }
+    }
+
+    public static List<BloodUnit> findAvailableForIssue(Connection connection, String bloodGroup,
+                                                        int limit, LocalDate today)
+            throws SQLException {
         String sql = SELECT_JOINED
                 + " WHERE bu.blood_group = ? AND bu.status = 'AVAILABLE' AND bu.expiry_date > ?"
+                + " AND NOT EXISTS (SELECT 1 FROM blood_reservations br"
+                + " WHERE br.unit_id = bu.unit_id)"
                 + " ORDER BY bu.expiry_date ASC, bu.unit_id ASC LIMIT ?";
-        return query(sql, statement -> {
+        return query(connection, sql, statement -> {
             statement.setString(1, bloodGroup);
             statement.setString(2, today.toString());
             statement.setInt(3, limit);
         });
     }
 
-    /** FEFO across several compatible groups, ordered globally by expiry date. */
+    /** FEFO across compatible groups; reserved units are held for other requests. */
     public static List<BloodUnit> findAvailableForCompatibleGroups(List<String> bloodGroups,
+                                                                   int limit,
+                                                                   LocalDate today)
+            throws SQLException {
+        try (Connection connection = DatabaseConnection.getConnection()) {
+            return findAvailableForCompatibleGroups(connection, bloodGroups, limit, today);
+        }
+    }
+
+    /** Caller-supplied connection sees expiry and reservation changes in one transaction. */
+    public static List<BloodUnit> findAvailableForCompatibleGroups(Connection connection,
+                                                                   List<String> bloodGroups,
                                                                    int limit,
                                                                    LocalDate today)
             throws SQLException {
@@ -139,8 +168,10 @@ public final class BloodUnitDAO {
         String sql = SELECT_JOINED
                 + " WHERE bu.status = 'AVAILABLE' AND bu.expiry_date > ?"
                 + " AND bu.blood_group IN (" + placeholders + ")"
+                + " AND NOT EXISTS (SELECT 1 FROM blood_reservations br"
+                + " WHERE br.unit_id = bu.unit_id)"
                 + " ORDER BY bu.expiry_date ASC, bu.unit_id ASC LIMIT ?";
-        return query(sql, statement -> {
+        return query(connection, sql, statement -> {
             statement.setString(1, today.toString());
             for (int i = 0; i < bloodGroups.size(); i++) {
                 statement.setString(i + 2, bloodGroups.get(i));
@@ -191,8 +222,11 @@ public final class BloodUnitDAO {
             counts.put(group, 0);
         }
 
-        String sql = "SELECT blood_group, COUNT(*) AS total FROM blood_units "
-                + "WHERE status = 'AVAILABLE' AND expiry_date > ? GROUP BY blood_group";
+        String sql = "SELECT blood_group, COUNT(*) AS total FROM blood_units bu "
+                + "WHERE bu.status = 'AVAILABLE' AND bu.expiry_date > ?"
+                + " AND NOT EXISTS (SELECT 1 FROM blood_reservations br"
+                + " WHERE br.unit_id = bu.unit_id)"
+                + " GROUP BY blood_group";
         try (Connection connection = DatabaseConnection.getConnection();
              PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, today.toString());
@@ -233,6 +267,8 @@ public final class BloodUnitDAO {
             throws SQLException {
         String sql = SELECT_JOINED
                 + " WHERE bu.status = 'AVAILABLE' AND bu.expiry_date BETWEEN ? AND ?"
+                + " AND NOT EXISTS (SELECT 1 FROM blood_reservations br"
+                + " WHERE br.unit_id = bu.unit_id)"
                 + " ORDER BY bu.expiry_date, bu.unit_id";
         return query(sql, statement -> {
             statement.setString(1, today.toString());
@@ -257,10 +293,15 @@ public final class BloodUnitDAO {
     }
 
     private static List<BloodUnit> query(String sql, ParameterSetter setter) throws SQLException {
-        List<BloodUnit> units = new ArrayList<>();
-        try (Connection connection = DatabaseConnection.getConnection();
-             PreparedStatement statement = connection.prepareStatement(sql)) {
+        try (Connection connection = DatabaseConnection.getConnection()) {
+            return query(connection, sql, setter);
+        }
+    }
 
+    private static List<BloodUnit> query(Connection connection, String sql, ParameterSetter setter)
+            throws SQLException {
+        List<BloodUnit> units = new ArrayList<>();
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
             setter.set(statement);
             try (ResultSet resultSet = statement.executeQuery()) {
                 while (resultSet.next()) {

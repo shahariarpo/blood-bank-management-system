@@ -41,6 +41,9 @@ public class MainFrame extends JFrame {
     private final CardLayout cardLayout = new CardLayout();
     private final JPanel contentPanel = new JPanel(cardLayout);
     private final Map<String, JButton> navigationButtons = new LinkedHashMap<>();
+    private final DashboardPanel dashboardPanel = new DashboardPanel();
+    private final ReportsPanel reportsPanel = new ReportsPanel();
+    private boolean navigationReady;
 
     public MainFrame() {
         super("Blood Bank Management System");
@@ -53,13 +56,13 @@ public class MainFrame extends JFrame {
         add(createSidebar(), BorderLayout.WEST);
 
         contentPanel.setBackground(UIComponents.LIGHT_GREY);
-        contentPanel.add(new DashboardPanel(), DASHBOARD);
+        contentPanel.add(dashboardPanel, DASHBOARD);
         contentPanel.add(new DonorPanel(), DONORS);
         contentPanel.add(new PatientPanel(), PATIENTS);
         contentPanel.add(new DonationPanel(), DONATIONS);
         contentPanel.add(new InventoryPanel(), INVENTORY);
         contentPanel.add(new RequestPanel(), REQUESTS);
-        contentPanel.add(new ReportsPanel(), REPORTS);
+        contentPanel.add(reportsPanel, REPORTS);
         add(contentPanel, BorderLayout.CENTER);
 
         showCard(DASHBOARD);
@@ -145,6 +148,16 @@ public class MainFrame extends JFrame {
         cardLayout.show(contentPanel, card);
         navigationButtons.forEach((name, button) ->
                 button.setBackground(name.equals(card) ? UIComponents.RED : UIComponents.DARK));
+
+        // Panels load once in their constructors. Refresh live summaries when revisited.
+        if (navigationReady) {
+            if (DASHBOARD.equals(card)) {
+                dashboardPanel.reload();
+            } else if (REPORTS.equals(card)) {
+                reportsPanel.reload();
+            }
+        }
+        navigationReady = true;
     }
 
     private void logout() {

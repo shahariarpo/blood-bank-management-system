@@ -35,6 +35,13 @@ public final class BloodRequestDAO {
                 statement -> { });
     }
 
+    /** Smallest useful history for the dashboard; never more than {@code limit} rows. */
+    public static List<BloodRequest> findRecent(int limit) throws SQLException {
+        String sql = SELECT_JOINED
+                + " ORDER BY r.request_date DESC, r.request_id DESC LIMIT ?";
+        return query(sql, statement -> statement.setInt(1, Math.max(1, limit)));
+    }
+
     public static List<BloodRequest> findByStatus(String status) throws SQLException {
         return query(SELECT_JOINED + " WHERE r.status = ?"
                         + " ORDER BY r.request_date DESC, r.request_id DESC",
@@ -42,7 +49,14 @@ public final class BloodRequestDAO {
     }
 
     public static Optional<BloodRequest> findById(int requestId) throws SQLException {
-        List<BloodRequest> requests = query(SELECT_JOINED + " WHERE r.request_id = ?",
+        try (Connection connection = DatabaseConnection.getConnection()) {
+            return findById(connection, requestId);
+        }
+    }
+
+    public static Optional<BloodRequest> findById(Connection connection, int requestId)
+            throws SQLException {
+        List<BloodRequest> requests = query(connection, SELECT_JOINED + " WHERE r.request_id = ?",
                 statement -> statement.setInt(1, requestId));
         return requests.isEmpty() ? Optional.empty() : Optional.of(requests.get(0));
     }
@@ -125,9 +139,15 @@ public final class BloodRequestDAO {
 
     private static List<BloodRequest> query(String sql, ParameterSetter setter)
             throws SQLException {
+        try (Connection connection = DatabaseConnection.getConnection()) {
+            return query(connection, sql, setter);
+        }
+    }
+
+    private static List<BloodRequest> query(Connection connection, String sql,
+                                            ParameterSetter setter) throws SQLException {
         List<BloodRequest> requests = new ArrayList<>();
-        try (Connection connection = DatabaseConnection.getConnection();
-             PreparedStatement statement = connection.prepareStatement(sql)) {
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
             setter.set(statement);
             try (ResultSet resultSet = statement.executeQuery()) {
                 while (resultSet.next()) {

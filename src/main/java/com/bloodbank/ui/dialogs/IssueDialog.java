@@ -3,6 +3,7 @@ package com.bloodbank.ui.dialogs;
 import com.bloodbank.model.BloodRequest;
 import com.bloodbank.model.BloodUnit;
 import com.bloodbank.service.IssueService;
+import com.bloodbank.service.ReservationService;
 import com.bloodbank.ui.UIComponents;
 import com.bloodbank.util.BloodCompatibility;
 
@@ -28,13 +29,17 @@ import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 
 /** Transactional issuing screen for an approved request. */
 public class IssueDialog extends JDialog {
 
-    private static final String[] PREVIEW_COLUMNS = {"Unit", "Group", "Component", "Expires"};
+    private static final String[] PREVIEW_COLUMNS = {
+            "Unit", "Group", "Component", "Expires", "Source"
+    };
 
     private final BloodRequest request;
     private final JTextField quantityField;
@@ -46,18 +51,20 @@ public class IssueDialog extends JDialog {
     private final JButton issueButton = UIComponents.createPrimaryButton("Issue units");
 
     private List<BloodUnit> eligibleUnits = new ArrayList<>();
+    private Set<Integer> reservedUnitIds = new HashSet<>();
     private boolean changed;
 
     public IssueDialog(Frame owner, BloodRequest request) {
         super(owner, "Issue blood for request #" + request.getRequestId(), true);
         this.request = request;
-        this.quantityField = new JTextField(String.valueOf(request.getQuantity()), 8);
+        this.quantityField = new JTextField(String.valueOf(request.getQuantity()), 12);
         this.compatibilityLabel = UIComponents.createSubtitle(
                 "Eligible donor groups: "
                         + String.join(", ", BloodCompatibility.compatibleDonorGroups(
                                 request.getBloodGroup())));
 
-        setSize(620, 520);
+        setSize(760, 520);
+        setMinimumSize(new Dimension(700, 480));
         setLocationRelativeTo(owner);
         setLayout(new BorderLayout());
         add(buildDetails(), BorderLayout.NORTH);
@@ -103,8 +110,9 @@ public class IssueDialog extends JDialog {
         previewTable.getColumnModel().getColumn(1).setPreferredWidth(70);
         previewTable.getColumnModel().getColumn(2).setPreferredWidth(130);
         previewTable.getColumnModel().getColumn(3).setPreferredWidth(110);
+        previewTable.getColumnModel().getColumn(4).setPreferredWidth(90);
         JScrollPane scroll = new JScrollPane(previewTable);
-        scroll.setPreferredSize(new Dimension(560, 180));
+        scroll.setPreferredSize(new Dimension(700, 190));
         return UIComponents.createSection("Eligible units (FEFO order)", scroll);
     }
 
@@ -125,27 +133,37 @@ public class IssueDialog extends JDialog {
         c.gridx = 0;
         c.gridy = row;
         c.gridwidth = 1;
+        c.weightx = 0;
+        c.fill = GridBagConstraints.NONE;
         c.anchor = GridBagConstraints.LINE_END;
         panel.add(new JLabel(label), c);
         c.gridx = 1;
+        c.weightx = 1;
+        c.fill = GridBagConstraints.HORIZONTAL;
         c.anchor = GridBagConstraints.LINE_START;
         panel.add(value instanceof java.awt.Component
                 ? (java.awt.Component) value : new JLabel(String.valueOf(value)), c);
     }
 
     private void loadEligibleUnits() {
-        new SwingWorker<List<BloodUnit>, Void>() {
+        new SwingWorker<EligiblePreview, Void>() {
             @Override
-            protected List<BloodUnit> doInBackground() throws Exception {
-                return IssueService.findEligibleUnits(request.getRequestId());
+            protected EligiblePreview doInBackground() throws Exception {
+                List<BloodUnit> units = IssueService.findEligibleUnits(request.getRequestId());
+                Set<Integer> reserved = new HashSet<>(
+                        ReservationService.getUnitIdsForRequest(request.getRequestId()));
+                return new EligiblePreview(units, reserved);
             }
 
             @Override
             protected void done() {
                 try {
-                    eligibleUnits = get();
+                    EligiblePreview preview = get();
+                    eligibleUnits = preview.units;
+                    reservedUnitIds = preview.reservedUnitIds;
                     populatePreview();
-                    eligibleLabel.setText(eligibleUnits.size() + " available unit(s)");
+                    eligibleLabel.setText(eligibleUnits.size() + " eligible unit(s), "
+                            + reservedUnitIds.size() + " reserved");
                     eligibleLabel.setForeground(eligibleUnits.isEmpty()
                             ? UIComponents.RED : UIComponents.MUTED);
                     quantityField.setText(String.valueOf(
@@ -171,7 +189,8 @@ public class IssueDialog extends JDialog {
                     unit.getUnitId(),
                     unit.getBloodGroup(),
                     unit.getComponentType(),
-                    unit.getExpiryDate()
+                    unit.getExpiryDate(),
+                    reservedUnitIds.contains(unit.getUnitId()) ? "Reserved" : "Available"
             });
         }
     }
@@ -215,5 +234,15 @@ public class IssueDialog extends JDialog {
 
     public boolean isChanged() {
         return changed;
+    }
+
+    private static final class EligiblePreview {
+        private final List<BloodUnit> units;
+        private final Set<Integer> reservedUnitIds;
+
+        private EligiblePreview(List<BloodUnit> units, Set<Integer> reservedUnitIds) {
+            this.units = units;
+            this.reservedUnitIds = reservedUnitIds;
+        }
     }
 }

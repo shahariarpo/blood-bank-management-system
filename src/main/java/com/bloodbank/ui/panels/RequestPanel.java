@@ -4,6 +4,7 @@ import com.bloodbank.model.BloodIssue;
 import com.bloodbank.model.BloodRequest;
 import com.bloodbank.service.IssueService;
 import com.bloodbank.service.RequestService;
+import com.bloodbank.service.ReservationService;
 import com.bloodbank.ui.UIComponents;
 import com.bloodbank.ui.dialogs.IssueDialog;
 import com.bloodbank.ui.dialogs.RequestDialog;
@@ -29,13 +30,15 @@ import java.awt.FlowLayout;
 import java.awt.Frame;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutionException;
 
 /** Requests, approvals and transaction-safe issuing. */
 public class RequestPanel extends JPanel {
 
     private static final String[] REQUEST_COLUMNS = {
-            "ID", "Patient", "Patient group", "Requested", "Qty", "Date", "Priority", "Status"
+            "ID", "Patient", "Patient group", "Requested", "Qty", "Reserved",
+            "Date", "Priority", "Status"
     };
     private static final String[] ISSUE_COLUMNS = {
             "Issue", "Request", "Patient", "Unit", "Blood group", "Component", "Date"
@@ -49,6 +52,7 @@ public class RequestPanel extends JPanel {
     private final JButton addButton = UIComponents.createPrimaryButton("New request");
     private final JButton approveButton = new JButton("Approve");
     private final JButton rejectButton = new JButton("Reject");
+    private final JButton cancelButton = new JButton("Cancel");
     private final JButton issueButton = new JButton("Issue blood");
 
     private final JTable requestTable = UIComponents.createTable(REQUEST_COLUMNS);
@@ -57,6 +61,7 @@ public class RequestPanel extends JPanel {
     private final DefaultTableModel issueModel = (DefaultTableModel) issueTable.getModel();
 
     private List<BloodRequest> displayedRequests = new ArrayList<>();
+    private Map<Integer, Integer> displayedReservations = Map.of();
     private boolean busy;
 
     public RequestPanel() {
@@ -76,7 +81,7 @@ public class RequestPanel extends JPanel {
 
         requestTable.getColumnModel().getColumn(0).setPreferredWidth(50);
         requestTable.getColumnModel().getColumn(1).setPreferredWidth(140);
-        requestTable.getColumnModel().getColumn(7).setPreferredWidth(150);
+        requestTable.getColumnModel().getColumn(8).setPreferredWidth(150);
         requestTable.getSelectionModel().addListSelectionListener(event -> {
             if (!event.getValueIsAdjusting()) {
                 updateActionButtons();
@@ -106,8 +111,9 @@ public class RequestPanel extends JPanel {
         refreshButton.addActionListener(event -> loadData());
         statusFilter.addActionListener(event -> loadData());
         addButton.addActionListener(event -> openNewDialog());
-        approveButton.addActionListener(event -> changeStatus("APPROVED"));
-        rejectButton.addActionListener(event -> changeStatus("REJECTED"));
+        approveButton.addActionListener(event -> approveSelectedRequest());
+        rejectButton.addActionListener(event -> rejectSelectedRequest());
+        cancelButton.addActionListener(event -> cancelSelectedRequest());
         issueButton.addActionListener(event -> openIssueDialog());
 
         updateActionButtons();
@@ -137,10 +143,11 @@ public class RequestPanel extends JPanel {
         actions.setBorder(BorderFactory.createEmptyBorder(8, 22, 10, 22));
         actions.add(approveButton);
         actions.add(rejectButton);
+        actions.add(cancelButton);
         actions.add(issueButton);
         actions.add(Box.createHorizontalStrut(8));
         actions.add(UIComponents.createSubtitle(
-                "Issuing is FEFO, transactional, and not clinical authorization."));
+                "Approval reserves FEFO units; issuing is transactional and not clinical authorization."));
         return actions;
     }
 
@@ -158,7 +165,8 @@ public class RequestPanel extends JPanel {
                         "ALL".equals(status)
                                 ? RequestService.search(keyword)
                                 : RequestService.findByStatus(status),
-                        IssueService.getIssuingHistory());
+                        IssueService.getIssuingHistory(),
+                        ReservationService.getCountsByRequest());
             }
 
             @Override
@@ -190,14 +198,17 @@ public class RequestPanel extends JPanel {
 
     private void populate(RequestSnapshot snapshot) {
         displayedRequests = snapshot.requests;
+        displayedReservations = snapshot.reservations;
         requestModel.setRowCount(0);
         for (BloodRequest request : snapshot.requests) {
+            int reserved = snapshot.reservations.getOrDefault(request.getRequestId(), 0);
             requestModel.addRow(new Object[]{
                     request.getRequestId(),
                     request.getPatientName(),
                     request.getPatientBloodGroup(),
                     request.getBloodGroup(),
                     request.getQuantity(),
+                    reserved + " / " + request.getQuantity(),
                     request.getRequestDate(),
                     request.getPriority(),
                     request.getStatus()
@@ -228,8 +239,13 @@ public class RequestPanel extends JPanel {
         boolean pending = !busy && request != null && "PENDING".equals(request.getStatus());
         boolean issuable = !busy && request != null
                 && RequestService.ISSUABLE_STATUSES.contains(request.getStatus());
+        boolean rejectable = !busy && request != null
+                && List.of("PENDING", "APPROVED").contains(request.getStatus());
+        boolean cancellable = !busy && request != null
+                && List.of("APPROVED", "PARTIALLY_FULFILLED").contains(request.getStatus());
         approveButton.setEnabled(pending);
-        rejectButton.setEnabled(pending);
+        rejectButton.setEnabled(rejectable);
+        cancelButton.setEnabled(cancellable);
         issueButton.setEnabled(issuable);
     }
 
@@ -244,27 +260,85 @@ public class RequestPanel extends JPanel {
         }
     }
 
-    private void changeStatus(String target) {
+    private void approveSelectedRequest() {
         BloodRequest request = selectedRequest();
         if (request == null) {
             return;
         }
-        String verb = "APPROVED".equals(target) ? "approve" : "reject";
         int answer = JOptionPane.showConfirmDialog(this,
-                verb.substring(0, 1).toUpperCase() + verb.substring(1)
-                        + " request #" + request.getRequestId() + "?",
-                "Confirm", JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE);
+                "Approve request #" + request.getRequestId()
+                        + "? Compatible FEFO units will be reserved and removed from "
+                        + "available inventory.",
+                "Confirm approval", JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE);
         if (answer != JOptionPane.YES_OPTION) {
             return;
         }
 
-        runAction(() -> {
-            if ("APPROVED".equals(target)) {
-                RequestService.approve(request.getRequestId());
-            } else {
-                RequestService.reject(request.getRequestId());
+        busy = true;
+        updateActionButtons();
+        setControlsEnabled(false);
+        new SwingWorker<RequestService.ApprovalResult, Void>() {
+            @Override
+            protected RequestService.ApprovalResult doInBackground() throws Exception {
+                return RequestService.approve(request.getRequestId());
             }
-        });
+
+            @Override
+            protected void done() {
+                busy = false;
+                try {
+                    RequestService.ApprovalResult result = get();
+                    loadData();
+                    int type = result.isPartial()
+                            ? JOptionPane.WARNING_MESSAGE : JOptionPane.INFORMATION_MESSAGE;
+                    JOptionPane.showMessageDialog(RequestPanel.this,
+                            result.message(), "Request approved", type);
+                } catch (ExecutionException e) {
+                    controlsFailed(e);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    controlsFailed(e);
+                }
+            }
+        }.execute();
+    }
+
+    private void rejectSelectedRequest() {
+        BloodRequest request = selectedRequest();
+        if (request == null) {
+            return;
+        }
+        int answer = JOptionPane.showConfirmDialog(this,
+                "Reject request #" + request.getRequestId()
+                        + "? Any reservation will be released.",
+                "Confirm rejection", JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE);
+        if (answer != JOptionPane.YES_OPTION) {
+            return;
+        }
+        runAction(() -> RequestService.reject(request.getRequestId()));
+    }
+
+    private void cancelSelectedRequest() {
+        BloodRequest request = selectedRequest();
+        if (request == null) {
+            return;
+        }
+        int answer = JOptionPane.showConfirmDialog(this,
+                "Cancel request #" + request.getRequestId()
+                        + "? Any reservation will be released.",
+                "Confirm cancellation", JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE);
+        if (answer != JOptionPane.YES_OPTION) {
+            return;
+        }
+        runAction(() -> RequestService.cancel(request.getRequestId()));
+    }
+
+    private void controlsFailed(Exception e) {
+        setControlsEnabled(true);
+        updateActionButtons();
+        String message = e.getCause() == null ? e.getMessage() : e.getCause().getMessage();
+        JOptionPane.showMessageDialog(RequestPanel.this,
+                message, "Could not update request", JOptionPane.ERROR_MESSAGE);
     }
 
     private void openIssueDialog() {
@@ -319,10 +393,13 @@ public class RequestPanel extends JPanel {
     private static final class RequestSnapshot {
         private final List<BloodRequest> requests;
         private final List<BloodIssue> issues;
+        private final Map<Integer, Integer> reservations;
 
-        private RequestSnapshot(List<BloodRequest> requests, List<BloodIssue> issues) {
+        private RequestSnapshot(List<BloodRequest> requests, List<BloodIssue> issues,
+                                Map<Integer, Integer> reservations) {
             this.requests = requests;
             this.issues = issues;
+            this.reservations = reservations;
         }
     }
 }

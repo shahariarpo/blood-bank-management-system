@@ -2,6 +2,7 @@ package com.bloodbank.service;
 
 import com.bloodbank.dao.BloodIssueDAO;
 import com.bloodbank.dao.BloodRequestDAO;
+import com.bloodbank.dao.BloodReservationDAO;
 import com.bloodbank.dao.BloodUnitDAO;
 import com.bloodbank.database.DatabaseConnection;
 import com.bloodbank.model.BloodIssue;
@@ -13,11 +14,14 @@ import com.bloodbank.util.Validators;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 /**
- * Transactional issuing: compatible, unexpired, available units are selected FEFO,
- * marked ISSUED, recorded in blood_issues, and the request status is updated together.
+ * Transactional issuing: reserved units are consumed first, then unreserved compatible
+ * units are selected FEFO. Units, blood_issues rows, reservations and request status
+ * all commit together or roll back together.
  *
  * Compatibility is illustrative only; it is not clinical authorization.
  */
@@ -27,7 +31,7 @@ public final class IssueService {
         // Service class - no instances.
     }
 
-    /** Preview of eligible units. Expired units are refreshed, but nothing is issued. */
+    /** Preview of eligible units. Reserved units for this request come first. */
     public static List<BloodUnit> findEligibleUnits(int requestId) throws SQLException {
         BloodRequest request = BloodRequestDAO.findById(requestId)
                 .orElseThrow(() -> new IllegalStateException("Request not found."));
@@ -35,20 +39,39 @@ public final class IssueService {
             throw new IllegalStateException(
                     "Only APPROVED or partially fulfilled requests can be issued.");
         }
-        return findEligibleUnits(request.getBloodGroup());
+
+        InventoryService.refreshStatuses();
+        LocalDate today = LocalDate.now();
+        List<String> compatibleGroups =
+                BloodCompatibility.compatibleDonorGroups(request.getBloodGroup());
+        List<BloodUnit> units = new ArrayList<>();
+
+        for (int unitId : ReservationService.getUnitIdsForRequest(requestId)) {
+            BloodUnit unit = BloodUnitDAO.findById(unitId).orElse(null);
+            if (unit != null && "AVAILABLE".equals(unit.getStatus())
+                    && unit.getExpiryDate().isAfter(today)
+                    && compatibleGroups.contains(unit.getBloodGroup())) {
+                units.add(unit);
+            }
+        }
+        units.sort(Comparator.comparing(BloodUnit::getExpiryDate)
+                .thenComparingInt(BloodUnit::getUnitId));
+        units.addAll(findEligibleUnits(request.getBloodGroup()));
+        return units;
     }
 
+    /** Preview of unreserved, unexpired compatible units. No database changes. */
     public static List<BloodUnit> findEligibleUnits(String bloodGroup) throws SQLException {
         if (!Validators.isValidBloodGroup(bloodGroup)) {
             throw new IllegalArgumentException("Select a valid blood group.");
         }
-        LocalDate today = LocalDate.now();
-        BloodUnitDAO.expireUnits(today);
+        InventoryService.refreshStatuses();
         List<String> compatibleGroups = BloodCompatibility.compatibleDonorGroups(bloodGroup);
         if (compatibleGroups.isEmpty()) {
             return List.of();
         }
-        return BloodUnitDAO.findAvailableForCompatibleGroups(compatibleGroups, 1000, today);
+        return BloodUnitDAO.findAvailableForCompatibleGroups(
+                compatibleGroups, 1000, LocalDate.now());
     }
 
     /**
@@ -70,8 +93,9 @@ public final class IssueService {
             try {
                 LocalDate today = LocalDate.now();
                 BloodUnitDAO.expireUnits(connection, today);
+                BloodReservationDAO.releaseExpired(connection, today);
 
-                BloodRequest request = BloodRequestDAO.findById(requestId)
+                BloodRequest request = BloodRequestDAO.findById(connection, requestId)
                         .orElseThrow(() -> new IllegalStateException(
                                 "Request not found. Refresh the list."));
                 if (!RequestService.ISSUABLE_STATUSES.contains(request.getStatus())) {
@@ -88,8 +112,8 @@ public final class IssueService {
 
                 List<String> compatibleGroups =
                         BloodCompatibility.compatibleDonorGroups(request.getBloodGroup());
-                List<BloodUnit> units = BloodUnitDAO.findAvailableForCompatibleGroups(
-                        compatibleGroups, needed, today);
+                List<BloodUnit> units = collectUnits(connection, requestId, compatibleGroups,
+                        needed, today);
 
                 if (units.isEmpty()) {
                     throw new IllegalStateException(
@@ -108,6 +132,7 @@ public final class IssueService {
                         throw new IllegalStateException("Unit " + unit.getUnitId()
                                 + " is no longer available. The issue was rolled back.");
                     }
+                    BloodReservationDAO.deleteByUnitId(connection, unit.getUnitId());
                     BloodIssueDAO.insert(connection,
                             new BloodIssue(requestId, unit.getUnitId(), today));
                 }
@@ -128,6 +153,33 @@ public final class IssueService {
                 connection.setAutoCommit(oldAutoCommit);
             }
         }
+    }
+
+    /** Reserved units first, then unreserved FEFO units to fill the remaining quantity. */
+    private static List<BloodUnit> collectUnits(Connection connection, int requestId,
+                                                 List<String> compatibleGroups, int needed,
+                                                 LocalDate today) throws SQLException {
+        List<BloodUnit> units = new ArrayList<>();
+        for (int unitId : BloodReservationDAO.findUnitIdsByRequestId(connection, requestId)) {
+            BloodUnit unit = BloodUnitDAO.findById(connection, unitId).orElse(null);
+            if (unit != null && "AVAILABLE".equals(unit.getStatus())
+                    && unit.getExpiryDate().isAfter(today)
+                    && compatibleGroups.contains(unit.getBloodGroup())) {
+                units.add(unit);
+            }
+            if (units.size() >= needed) {
+                break;
+            }
+        }
+        units.sort(Comparator.comparing(BloodUnit::getExpiryDate)
+                .thenComparingInt(BloodUnit::getUnitId));
+
+        int remaining = needed - units.size();
+        if (remaining > 0 && !compatibleGroups.isEmpty()) {
+            units.addAll(BloodUnitDAO.findAvailableForCompatibleGroups(
+                    connection, compatibleGroups, remaining, today));
+        }
+        return units;
     }
 
     public static List<BloodIssue> getIssuingHistory() throws SQLException {

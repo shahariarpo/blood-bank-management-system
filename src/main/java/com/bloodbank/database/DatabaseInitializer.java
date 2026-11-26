@@ -10,7 +10,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 
 /**
- * Creates the seven application tables by running schema.sql from the classpath.
+ * Creates the eight application tables by running schema.sql from the classpath.
  * Because the script uses IF NOT EXISTS, this can be called on every startup.
  */
 public final class DatabaseInitializer {

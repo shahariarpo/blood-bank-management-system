@@ -25,6 +25,16 @@ public final class DonorDAO {
         return query(sql, statement -> { });
     }
 
+    public static int count() throws SQLException {
+        String sql = "SELECT COUNT(*) FROM donors";
+        try (Connection connection = DatabaseConnection.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql);
+             ResultSet resultSet = statement.executeQuery()) {
+            resultSet.next();
+            return resultSet.getInt(1);
+        }
+    }
+
     /** Searches name, ID, phone and blood group with one LIKE pattern. */
     public static List<Donor> search(String keyword) throws SQLException {
         String sql = "SELECT donor_id, name, age, gender, blood_group, phone, address, created_at "
